@@ -392,3 +392,4 @@ Cargo.lock
 
 # Git worktrees
 .worktrees/
+/.sisyphus
