@@ -54,8 +54,9 @@ Modernize and harden Passivbot end-to-end: remove silent-failure patterns, reduc
   - extracted wallet-exposure helpers to `src/passivbot_exposure_utils.py` and added WEL propagation helper.
   - extracted order-update placeholder helpers and recent-order tracking helpers to `src/passivbot_order_update_utils.py`.
   - extracted default live-state/approved-symbol hooks to `src/passivbot_hook_utils.py`, including `symbol_is_eligible()`.
-  - extracted mode/position-count helpers to `src/passivbot_mode_utils.py` and added max-position-cap, forager-mode, orchestrator mode-conversion, fallback-override, and live-symbol-universe helpers.
-  - extracted coin-override initialization, config-lookup, live/bot accessors, and bot-param shorthand helpers to `src/passivbot_override_utils.py`.
+- extracted mode/position-count helpers to `src/passivbot_mode_utils.py` and added max-position-cap, forager-mode, orchestrator mode-conversion, fallback-override, and live-symbol-universe helpers.
+- extracted orchestrator input helpers to `src/passivbot_orchestrator_utils.py`.
+- extracted coin-override initialization, config-lookup, live/bot accessors, and bot-param shorthand helpers to `src/passivbot_override_utils.py`.
   - extracted PnL manager initialization helper to `src/passivbot_pnls_utils.py`.
   - began deconstructing `src/fill_events_manager.py` with fee, time, position-state, realized-PnL reconstruction, parsing, pagination, Bybit normalization/closed-pnl, cache, fetcher-construction, and CLI helper modules.
   - began deconstructing `src/candlestick_manager.py` by extracting query and EMA helper modules.
@@ -237,6 +238,11 @@ Modernize and harden Passivbot end-to-end: remove silent-failure patterns, reduc
 - `mode-conversion helper` extraction: ✅ `src/passivbot_mode_utils.py`
 - `fallback mode-override helper` extraction: ✅ `src/passivbot_mode_utils.py`
 - `live-symbol-universe helper` extraction: ✅ `src/passivbot_mode_utils.py`
+- `orchestrator input helper` extraction: ✅ `src/passivbot_orchestrator_utils.py`
+- `orchestrator symbol input helper` extraction: ✅ `src/passivbot_orchestrator_utils.py`
+- `orchestrator base input helper` extraction: ✅ `src/passivbot_orchestrator_utils.py`
+- `orchestrator output helper` extraction: ✅ `src/passivbot_orchestrator_utils.py`
+- `orchestrator missing EMA logger` extraction: ✅ `src/passivbot_orchestrator_utils.py`
 - `coin-override init helper` extraction: ✅ `src/passivbot_override_utils.py`
 - `config override lookup helper` extraction: ✅ `src/passivbot_override_utils.py`
 - `live/bot accessor helper` extraction: ✅ `src/passivbot_override_utils.py`
@@ -343,6 +349,7 @@ Modernize and harden Passivbot end-to-end: remove silent-failure patterns, reduc
 2. Expand tests for order placement, risk gates, exchange failures, and PnL history.
 3. Run diagnostics on all changed files.
 4. Run targeted pytest, then broader regression coverage.
+5. Produce a concise report of all work and improvements completed so far. ✅ `/.sisyphus/reports/work_summary.md`
 
 #### Phase 5 QA
 - Tool: full targeted `pytest` matrix for touched areas, then broader repo regression run.

@@ -1,6 +1,7 @@
 from importlib import import_module
 
 import asyncio
+import math
 
 
 cm_ccxt_utils = import_module("candlestick_manager_ccxt_utils")
@@ -146,4 +147,8 @@ def test_normalize_rows_and_pagination_state_helpers():
     )
     assert (since_start, since, end_excl, total_span, prev_last_ts) == (120_000, 60_000, 300_000, 180_000, None)
     assert cm_ccxt_utils.compute_next_since(180_000, period_ms=60_000, overlap_candles=1, current_since=60_000) == 120_000
-    assert cm_ccxt_utils.progress_percent(180_000, 120_000, 180_000) == 33.33333333333333
+    assert math.isclose(
+        cm_ccxt_utils.progress_percent(180_000, 120_000, 180_000),
+        33.33333333333333,
+        rel_tol=1e-12,
+    )
