@@ -91,6 +91,8 @@ assert_correct_ccxt_version(ccxt=ccxt_async)
 
 class KucoinBot(CCXTBot):
     MAX_OPEN_ORDERS = 150
+    EXCHANGE_CONFIG_PACING_SECONDS = 0.2
+    OHLCV_REST_FALLBACK_PACING_SECONDS = 0.2
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -159,20 +161,59 @@ class KucoinBot(CCXTBot):
         elif self.endpoint_override:
             logging.info("Skipping Kucoin websocket session due to custom endpoint override.")
 
+    def _supports_ohlcv_watch(self) -> bool:
+        if self.ccp is None:
+            return False
+        has_map = getattr(self.ccp, "has", {}) or {}
+        return bool(has_map.get("watchOHLCV") or has_map.get("watch_ohlcv"))
+
+    @staticmethod
+    def _select_latest_ohlcv_row(rows):
+        if not rows:
+            return None
+        latest = sorted(rows, key=lambda x: x[0])[-1]
+        return latest
+
     async def watch_ohlcvs_1m(self):
-        """KuCoin: No-op - OHLCV websocket not used."""
-        return
+        """KuCoin: prefer websocket when available, otherwise paced REST fallback."""
+        symbols = sorted(getattr(self, "active_symbols", []) or [])
+        out = {}
+        for i, symbol in enumerate(symbols):
+            candle = await self.watch_ohlcv_1m_single(symbol)
+            if candle is not None:
+                out[symbol] = candle
+            if i < len(symbols) - 1 and self.OHLCV_REST_FALLBACK_PACING_SECONDS > 0.0:
+                await asyncio.sleep(self.OHLCV_REST_FALLBACK_PACING_SECONDS)
+        return out
 
     async def watch_ohlcv_1m_single(self, symbol):
-        """KuCoin: No-op - OHLCV websocket not used."""
-        return
+        """KuCoin: use WS if supported, else fetch latest 1m candle via paced REST."""
+        if self._supports_ohlcv_watch():
+            try:
+                rows = await self.ccp.watch_ohlcv(symbol, timeframe="1m")
+                return self._select_latest_ohlcv_row(rows)
+            except Exception as e:
+                logging.warning("%s: websocket 1m candle watch failed, falling back to REST: %s", symbol, e)
+        rows = await self.cca.fetch_ohlcv(symbol, timeframe="1m", limit=2)
+        return self._select_latest_ohlcv_row(rows)
 
     def _get_position_side_for_order(self, order: dict) -> str:
         """KuCoin: Derive position_side from position state."""
         return self.determine_pos_side(order)
 
     def determine_pos_side(self, order):
-        # non hedge mode
+        info = order.get("info", {}) if isinstance(order.get("info", {}), dict) else {}
+        reduce_only = order.get("reduceOnly")
+        if reduce_only is None:
+            reduce_only = info.get("reduceOnly")
+        if reduce_only is None:
+            reduce_only = info.get("closeOrder")
+        if reduce_only is not None:
+            if order["side"] == "buy":
+                return "short" if bool(reduce_only) else "long"
+            if order["side"] == "sell":
+                return "long" if bool(reduce_only) else "short"
+        # non hedge mode fallback
         if self.has_position("long", order["symbol"]):
             return "long"
         elif self.has_position("short", order["symbol"]):
@@ -448,38 +489,26 @@ class KucoinBot(CCXTBot):
                 logging.info("set_position_mode not supported by current KuCoin client; continuing")
         except Exception as e:
             logging.warning(f"set_position_mode hedged=True not applied: {e}")
+            raise
 
     async def update_exchange_config_by_symbols(self, symbols):
-        coros_to_call = []
-        for symbol in symbols:
+        failures = []
+        for i, symbol in enumerate(symbols):
             try:
                 margin_mode = self._get_margin_mode_for_symbol(symbol)
                 params = {
                     "marginMode": margin_mode,
                     "symbol": symbol,
                 }
-                coros_to_call.append(
-                    (
-                        symbol,
-                        "set_margin_mode",
-                        asyncio.create_task(self.cca.set_margin_mode(**params)),
-                    )
-                )
+                res = await self.cca.set_margin_mode(**params)
+                logging.info("%s: set_margin_mode=%s", symbol, format_exchange_config_response(res))
             except Exception as e:
                 logging.warning(f"{symbol}: error set_margin_mode {e}")
-        for symbol, task_name, task in coros_to_call:
-            res = None
-            to_print = ""
-            try:
-                res = await task
-                to_print += f"{task_name}={format_exchange_config_response(res)}"
-            except Exception as e:
-                logging.warning(f"{symbol} error {task_name} {e}")
-            if to_print:
-                logging.info(f"{symbol}: {to_print}")
+                failures.append((symbol, "set_margin_mode", e))
+            if i < len(symbols) - 1 and self.EXCHANGE_CONFIG_PACING_SECONDS > 0.0:
+                await asyncio.sleep(self.EXCHANGE_CONFIG_PACING_SECONDS)
 
-        coros_to_call = []
-        for symbol in symbols:
+        for i, symbol in enumerate(symbols):
             try:
                 margin_mode = self._get_margin_mode_for_symbol(symbol)
                 params = {
@@ -487,18 +516,14 @@ class KucoinBot(CCXTBot):
                     "symbol": symbol,
                     "params": {"marginMode": margin_mode},
                 }
-                coros_to_call.append(
-                    (symbol, "set_leverage", asyncio.create_task(self.cca.set_leverage(**params)))
-                )
+                res = await self.cca.set_leverage(**params)
+                logging.info("%s: set_leverage=%s", symbol, format_exchange_config_response(res))
             except Exception as e:
                 logging.warning(f"{symbol}: error set_leverage {e}")
-        for symbol, task_name, task in coros_to_call:
-            res = None
-            to_print = ""
-            try:
-                res = await task
-                to_print += f"{task_name}={format_exchange_config_response(res)}"
-            except Exception as e:
-                logging.warning(f"{symbol} error {task_name} {e}")
-            if to_print:
-                logging.info(f"{symbol}: {to_print}")
+                failures.append((symbol, "set_leverage", e))
+            if i < len(symbols) - 1 and self.EXCHANGE_CONFIG_PACING_SECONDS > 0.0:
+                await asyncio.sleep(self.EXCHANGE_CONFIG_PACING_SECONDS)
+
+        if failures:
+            symbol, action, error = failures[0]
+            raise RuntimeError(f"kucoin exchange config failed for {symbol} {action}") from error

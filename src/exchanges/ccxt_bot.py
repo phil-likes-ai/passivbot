@@ -33,6 +33,7 @@ To customize behavior for a new exchange:
 
 import asyncio
 import math
+import random
 import time
 import traceback
 
@@ -152,6 +153,20 @@ class CCXTBot(Passivbot):
                 return "short"
 
         return "both"
+
+    def _calc_rate_limit_backoff_seconds(
+        self,
+        consecutive_rate_limits: int,
+        *,
+        base_seconds: float = 2.0,
+        max_seconds: float = 30.0,
+        jitter_seconds: float = 1.0,
+    ) -> float:
+        exponent = max(0, int(consecutive_rate_limits))
+        backoff = min(max_seconds, base_seconds**exponent)
+        if jitter_seconds > 0:
+            backoff += random.uniform(0.0, jitter_seconds)
+        return backoff
 
     # ═══════════════════ PNL FETCHING HOOKS ═══════════════════
 
@@ -310,7 +325,12 @@ class CCXTBot(Passivbot):
         Default: CCXT unified format total[quote]
         Override: Exchange-specific field paths (e.g., info.totalCrossWalletBalance)
         """
-        return float(fetched.get("total", {}).get(self.quote, 0))
+        totals = fetched.get("total")
+        if not isinstance(totals, dict):
+            raise KeyError(f"{self.exchange}: missing total balance payload")
+        if self.quote not in totals:
+            raise KeyError(f"{self.exchange}: missing quote balance for {self.quote}")
+        return float(totals[self.quote])
 
     async def fetch_positions(self) -> list:
         """Template method: Fetch all open positions.
@@ -1020,15 +1040,23 @@ class CCXTBot(Passivbot):
         tasks = [self.execute_order(order) for order in orders]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Check for exceptions and trigger error handling if needed
-        any_exceptions = any(isinstance(r, Exception) for r in results)
-        if any_exceptions:
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logging.error(f"error executing order {orders[i]}: {result}")
+        exceptions = [
+            (i, result) for i, result in enumerate(results) if isinstance(result, Exception)
+        ]
+        if exceptions:
+            for i, result in exceptions:
+                logging.error(f"error executing order {orders[i]}: {result}")
             await self.restart_bot_on_too_many_errors()
+            raise exceptions[0][1]
 
-        return results
+        normalized_results = []
+        for result in results:
+            if not isinstance(result, dict):
+                raise TypeError(
+                    f"{self.exchange}: execute_orders expected dict results, got {type(result).__name__}"
+                )
+            normalized_results.append(result)
+        return normalized_results
 
     async def execute_cancellations(self, orders: list[dict]) -> list[dict]:
         """Execute order cancellations in parallel using asyncio.gather."""
@@ -1038,11 +1066,20 @@ class CCXTBot(Passivbot):
         tasks = [self.execute_cancellation(order) for order in orders]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        any_exceptions = any(isinstance(r, Exception) for r in results)
-        if any_exceptions:
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logging.error(f"error cancelling order {orders[i]}: {result}")
+        exceptions = [
+            (i, result) for i, result in enumerate(results) if isinstance(result, Exception)
+        ]
+        if exceptions:
+            for i, result in exceptions:
+                logging.error(f"error cancelling order {orders[i]}: {result}")
             await self.restart_bot_on_too_many_errors()
+            raise exceptions[0][1]
 
-        return results
+        normalized_results = []
+        for result in results:
+            if not isinstance(result, dict):
+                raise TypeError(
+                    f"{self.exchange}: execute_cancellations expected dict results, got {type(result).__name__}"
+                )
+            normalized_results.append(result)
+        return normalized_results

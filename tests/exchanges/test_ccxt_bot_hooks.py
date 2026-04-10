@@ -67,6 +67,18 @@ class TestNormalizeOrderUpdate:
         assert result["position_side"] == "both"
 
 
+class TestRateLimitBackoffHelper:
+    def test_rate_limit_backoff_grows_and_respects_cap(self, monkeypatch):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        monkeypatch.setattr("exchanges.ccxt_bot.random.uniform", lambda a, b: 0.0)
+
+        assert bot._calc_rate_limit_backoff_seconds(1) == 2.0
+        assert bot._calc_rate_limit_backoff_seconds(2) == 4.0
+        assert bot._calc_rate_limit_backoff_seconds(10) == 30.0
+
+
 class TestWatchOrdersTemplateMethod:
     """Test watch_orders() template method."""
 
@@ -443,14 +455,13 @@ class TestFetchBalanceHooks:
 
         assert result == 1234.56
 
-    def test_get_balance_returns_zero_when_missing(self, bot_with_mock_cca):
-        """_get_balance should return 0.0 when quote not in total."""
+    def test_get_balance_raises_when_missing(self, bot_with_mock_cca):
+        """_get_balance should fail loudly when quote is missing from total."""
         bot = bot_with_mock_cca
         fetched = {"total": {"BTC": 0.5}}
 
-        result = bot._get_balance(fetched)
-
-        assert result == 0.0
+        with pytest.raises(KeyError, match="missing quote balance"):
+            bot._get_balance(fetched)
 
     @pytest.mark.asyncio
     async def test_fetch_balance_uses_hooks(self, bot_with_mock_cca):

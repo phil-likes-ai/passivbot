@@ -1,6 +1,5 @@
 import asyncio
 import json
-import random
 import traceback
 
 import ccxt.pro as ccxt_pro
@@ -297,7 +296,7 @@ class HyperliquidBot(CCXTBot):
                 self._health_ws_reconnects += 1
                 self._health_rate_limits += 1
                 _ws_consecutive_rate_limits += 1
-                backoff = min(30, 2 ** _ws_consecutive_rate_limits) + random.uniform(0, 1)
+                backoff = self._calc_rate_limit_backoff_seconds(_ws_consecutive_rate_limits)
                 logging.warning(
                     "[ws] %s: rate limited (reconnect #%d), backing off %.0fs...",
                     self.exchange,

@@ -109,8 +109,8 @@ class TestCCXTBotFetchBalance:
         assert balance == 1000.50
 
     @pytest.mark.asyncio
-    async def test_fetch_balance_returns_zero_when_missing(self):
-        """Should return 0 when quote currency not in balance."""
+    async def test_fetch_balance_raises_when_quote_missing(self):
+        """Should fail loudly when quote currency is missing from balance."""
         from exchanges.ccxt_bot import CCXTBot
 
         # Use __new__ to bypass complex Passivbot initialization
@@ -124,9 +124,8 @@ class TestCCXTBotFetchBalance:
             }
         )
 
-        balance = await bot.fetch_balance()
-
-        assert balance == 0.0
+        with pytest.raises(KeyError, match="missing quote balance"):
+            await bot.fetch_balance()
 
 
 class TestCCXTBotFetchPositions:
@@ -276,6 +275,58 @@ class TestCCXTBotWatchOrders:
         order = handled_orders[0][0]
         assert order["position_side"] == "long"
         assert order["qty"] == 0.5
+
+
+class TestCCXTBotBatchExecution:
+    @pytest.mark.asyncio
+    async def test_execute_orders_raises_after_restart_handling(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.restart_bot_on_too_many_errors = AsyncMock()
+
+        async def execute_order(order):
+            if order["symbol"] == "FAIL/USDT:USDT":
+                raise RuntimeError("boom")
+            return {"id": "ok", **order}
+
+        bot.execute_order = execute_order
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await bot.execute_orders(
+                [
+                    {"symbol": "BTC/USDT:USDT", "side": "buy"},
+                    {"symbol": "FAIL/USDT:USDT", "side": "sell"},
+                ]
+            )
+
+        bot.restart_bot_on_too_many_errors.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_cancellations_raises_after_restart_handling(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.restart_bot_on_too_many_errors = AsyncMock()
+
+        async def execute_cancellation(order):
+            if order["id"] == "bad":
+                raise RuntimeError("cancel boom")
+            return {"status": "canceled", **order}
+
+        bot.execute_cancellation = execute_cancellation
+
+        with pytest.raises(RuntimeError, match="cancel boom"):
+            await bot.execute_cancellations(
+                [
+                    {"id": "good", "symbol": "BTC/USDT:USDT"},
+                    {"id": "bad", "symbol": "ETH/USDT:USDT"},
+                ]
+            )
+
+        bot.restart_bot_on_too_many_errors.assert_awaited_once()
 
 
 class TestCCXTBotUpdateExchangeConfig:

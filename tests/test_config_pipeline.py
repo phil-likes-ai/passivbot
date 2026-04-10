@@ -284,6 +284,84 @@ def test_prepare_config_rejects_backtest_inherited_live_fields(field, value):
         prepare_config(source, verbose=False, target="canonical", runtime=None)
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("leverage", 0, "config.live.leverage must be > 0.0"),
+        ("max_realized_loss_pct", 1.5, "config.live.max_realized_loss_pct must be <= 1.0"),
+        ("max_concurrent_api_requests", 0, "config.live.max_concurrent_api_requests must be >= 1 when set"),
+        ("warmup_ratio", 1.5, "config.live.warmup_ratio must be <= 1.0"),
+        (
+            "margin_mode_preference",
+            "banana",
+            "config.live.margin_mode_preference must be 'cross' or 'isolated'",
+        ),
+        (
+            "time_in_force",
+            "banana",
+            "config.live.time_in_force must be one of: good_till_cancelled, post_only, immediate_or_cancel",
+        ),
+    ],
+)
+def test_prepare_config_rejects_invalid_live_safety_settings(field, value, match):
+    source = {
+        "backtest": {},
+        "bot": {"long": {}, "short": {}},
+        "coin_overrides": {},
+        "live": {field: value},
+        "optimize": {"bounds": {}},
+    }
+
+    with pytest.raises((ValueError, TypeError), match=match):
+        prepare_config(source, verbose=False, target="canonical", runtime=None)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "match"),
+    [
+        (("bot", "long", "total_wallet_exposure_limit"), -1.0, "config.bot.long.total_wallet_exposure_limit must be >= 0.0"),
+        (("bot", "long", "n_positions"), -1, "config.bot.long.n_positions must be >= 0 when set"),
+        (("bot", "long", "ema_span_0"), 0, "config.bot.long.ema_span_0 must be > 0.0"),
+        (("bot", "long", "entry_initial_qty_pct"), 0, "config.bot.long.entry_initial_qty_pct must be > 0.0"),
+        (("bot", "long", "unstuck_threshold"), 1.5, "config.bot.long.unstuck_threshold must be <= 1.0"),
+    ],
+)
+def test_prepare_config_rejects_invalid_bot_risk_settings(path, value, match):
+    source = {
+        "backtest": {},
+        "bot": {"long": {}, "short": {}},
+        "coin_overrides": {},
+        "live": {},
+        "optimize": {"bounds": {}},
+    }
+    target = source
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    with pytest.raises((ValueError, TypeError), match=match):
+        prepare_config(source, verbose=False, target="canonical", runtime=None)
+
+
+def test_prepare_config_rejects_enabled_twel_with_zero_positions():
+    source = {
+        "backtest": {},
+        "bot": {
+            "long": {"total_wallet_exposure_limit": 1.0, "n_positions": 0},
+            "short": {},
+        },
+        "coin_overrides": {},
+        "live": {},
+        "optimize": {"bounds": {}},
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="config.bot.long.n_positions must be > 0 when total_wallet_exposure_limit is enabled",
+    ):
+        prepare_config(source, verbose=False, target="canonical", runtime=None)
+
+
 def test_prepare_config_migrates_legacy_backtest_market_slippage_key():
     source = {
         "backtest": {"panic_market_slippage_pct": 0.0015},

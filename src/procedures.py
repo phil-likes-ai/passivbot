@@ -22,6 +22,7 @@ from utils import (
     date_to_ts,
     get_first_ohlcv_iteratively,
     load_ccxt_instance,
+    utc_ms,
 )
 import sys
 import passivbot_rust as pbr
@@ -31,14 +32,14 @@ import ccxt.async_support as ccxta
 
 try:
     import hjson
-except:
-    print("hjson not found, trying without...")
-    pass
+except Exception:
+    hjson = None
+    logging.warning("hjson not found, trying without...")
 try:
     import pandas as pd
-except:
-    print("pandas not found, trying without...")
-    pass
+except Exception:
+    pd = None
+    logging.warning("pandas not found, trying without...")
 
 from pure_funcs import (
     numpyize,
@@ -64,14 +65,14 @@ def get_all_eligible_symbols(exchange="binance"):
     filepath = make_get_filepath(f"caches/{exchange}/eligible_symbols.json")
     loaded_json = None
     try:
-        loaded_json = json.load(open(filepath))
+        with open(filepath) as f:
+            loaded_json = json.load(f)
         if utc_ms() - get_file_mod_ms(filepath) > 1000 * 60 * 60 * 24:
-            print(f"Eligible_symbols cache more than 24h old. Fetching new.")
+            logging.info("Eligible_symbols cache more than 24h old. Fetching new.")
         else:
             return loaded_json
     except Exception as e:
-        print(f"failed to load {filepath}. Fetching from {exchange}")
-        pass
+        logging.info("failed to load %s. Fetching from %s (%s)", filepath, exchange, e)
     try:
         quote = quote_map[exchange]
         import ccxt
@@ -83,12 +84,13 @@ def get_all_eligible_symbols(exchange="binance"):
         ]
         eligible_symbols = sorted(set([x.replace(f"/{quote}:", "") for x in symbols]))
         eligible_symbols = [x for x in eligible_symbols if x]
-        json.dump(eligible_symbols, open(filepath, "w"))
+        with open(filepath, "w") as f:
+            json.dump(eligible_symbols, f)
         return eligible_symbols
     except Exception as e:
-        print(f"error fetching eligible symbols {e}")
+        logging.error("error fetching eligible symbols: %s", e)
         if loaded_json:
-            print(f"using cached data")
+            logging.info("using cached eligible symbols data")
             return loaded_json
         raise Exception("unable to fetch or load from cache")
 
@@ -124,6 +126,7 @@ def ensure_parent_directory(
     try:
         # Convert to Path object
         path = Path(filepath)
+        dirpath = path.parent
 
         # Determine if the path points to a directory
         # (either ends with separator or is explicitly a directory)
@@ -143,7 +146,7 @@ def ensure_parent_directory(
     except TypeError as e:
         raise TypeError(f"filepath must be str or Path, not {type(filepath)}") from e
     except PermissionError as e:
-        raise PermissionError(f"Permission denied creating directory: {dirpath}") from e
+        raise PermissionError(f"Permission denied creating directory for path: {filepath}") from e
     except Exception as e:
         raise RuntimeError(f"Error processing filepath: {str(e)}") from e
 
@@ -157,7 +160,8 @@ def load_user_info(user: str, api_keys_path="api-keys.json") -> dict:
     if api_keys_path is None:
         api_keys_path = "api-keys.json"
     try:
-        api_keys = json.load(open(api_keys_path))
+        with open(api_keys_path) as f:
+            api_keys = json.load(f)
     except Exception as e:
         raise Exception(f"error loading api keys file {api_keys_path} {e}")
     if user not in api_keys:
@@ -183,11 +187,12 @@ def load_user_info(user: str, api_keys_path="api-keys.json") -> dict:
 
 def load_exchange_key_secret_passphrase(
     user: str, api_keys_path="api-keys.json"
-) -> (str, str, str, str):
+) -> tuple[str, str, str, str]:
     if api_keys_path is None:
         api_keys_path = "api-keys.json"
     try:
-        keyfile = json.load(open(api_keys_path))
+        with open(api_keys_path) as f:
+            keyfile = json.load(f)
         if user in keyfile:
             return (
                 keyfile[user]["exchange"],
@@ -196,18 +201,22 @@ def load_exchange_key_secret_passphrase(
                 keyfile[user]["passphrase"] if "passphrase" in keyfile[user] else "",
             )
         else:
-            print("Looks like the keys aren't configured yet, or you entered the wrong username!")
+            logging.error("Looks like the keys aren't configured yet, or you entered the wrong username!")
         raise Exception("API KeyFile Missing!")
     except FileNotFoundError:
-        print("File Not Found!")
+        logging.error("File Not Found!")
         raise Exception("API KeyFile Missing!")
 
 
 def load_broker_code(exchange: str) -> str:
     try:
-        return hjson.load(open("broker_codes.hjson")).get(exchange, "")
+        if hjson is None:
+            logging.warning("hjson not available; broker code lookup disabled")
+            return ""
+        with open("broker_codes.hjson") as f:
+            return hjson.load(f).get(exchange, "")
     except Exception as e:
-        print(f"failed to load broker code", e)
+        logging.error("failed to load broker code: %s", e)
         traceback.print_exc()
         return ""
 
@@ -234,17 +243,18 @@ def print_async_exception(coro):
     if isinstance(coro, list):
         for elm in coro:
             print_async_exception(elm)
+        return
     try:
-        print(f"result: {coro.result()}")
-    except:
+        logging.info("async result: %s", coro.result())
+    except Exception:
         pass
     try:
-        print(f"exception: {coro.exception()}")
-    except:
+        logging.error("async exception: %s", coro.exception())
+    except Exception:
         pass
     try:
-        print(f"returned: {coro}")
-    except:
+        logging.info("async returned: %s", coro)
+    except Exception:
         pass
 
 
@@ -358,7 +368,7 @@ async def get_first_timestamps_unified(coins: List[str], exchange: str = None):
             return {c: ftss_exchange_specific.get(c, {}).get(exchange, 0.0) for c in coins}
         return ftss
 
-    print("Missing coins:", sorted(missing_coins))
+    logging.info("Missing coins: %s", sorted(missing_coins))
 
     # Map of exchange -> quote currency
     exchange_map = {
@@ -376,18 +386,18 @@ async def get_first_timestamps_unified(coins: List[str], exchange: str = None):
         try:
             ccxt_clients[ex_name] = load_ccxt_instance(ex_name)
         except Exception as e:
-            print(f"Error loading {ex_name} from ccxt. Skipping. {e}")
+            logging.warning("Error loading %s from ccxt. Skipping. %s", ex_name, e)
             del exchange_map[ex_name]
             if ex_name in ccxt_clients:
                 del ccxt_clients[ex_name]
     try:
-        print("Loading markets for each exchange...")
+        logging.info("Loading markets for each exchange...")
         load_tasks = {}
         for ex_name in sorted(ccxt_clients):
             try:
                 load_tasks[ex_name] = load_markets(ex_name)
             except Exception as e:
-                print(f"Error creating task for {ex_name}: {e}")
+                logging.warning("Error creating task for %s: %s", ex_name, e)
                 del ccxt_clients[ex_name]
                 if ex_name in exchange_map:
                     del exchange_map[ex_name]
@@ -397,7 +407,7 @@ async def get_first_timestamps_unified(coins: List[str], exchange: str = None):
                 res = await task
                 all_markets[ex_name] = res
             except Exception as e:
-                print(f"Warning: failed to load markets for {ex_name}: {e}")
+                logging.warning("failed to load markets for %s: %s", ex_name, e)
                 del ccxt_clients[ex_name]
                 if ex_name in exchange_map:
                     del exchange_map[ex_name]
@@ -407,7 +417,7 @@ async def get_first_timestamps_unified(coins: List[str], exchange: str = None):
 
         for i in range(0, len(missing_coins), BATCH_SIZE):
             batch = missing_coins[i : i + BATCH_SIZE]
-            print(f"\nProcessing batch: {batch}")
+            logging.info("Processing batch: %s", batch)
 
             # Create tasks for every coin/exchange pair in this batch
             tasks = {}
@@ -437,11 +447,14 @@ async def get_first_timestamps_unified(coins: List[str], exchange: str = None):
                             data = await tasks[coin][ex_name]
                             if data:
                                 batch_results[coin][ex_name] = data
-                                print(
-                                    f"Fetched {ex_name} {coin} => first candle: {data[0] if data else 'no data'}"
+                                logging.info(
+                                    "Fetched %s %s => first candle: %s",
+                                    ex_name,
+                                    coin,
+                                    data[0] if data else "no data",
                                 )
                         except Exception as e:
-                            print(f"Warning: failed to fetch OHLCV for {coin} on {ex_name}: {e}")
+                            logging.warning("failed to fetch OHLCV for %s on %s: %s", coin, ex_name, e)
 
             # Second pass: issue expensive Bitget fetch only for unresolved coins.
             for coin in batch:
@@ -461,11 +474,11 @@ async def get_first_timestamps_unified(coins: List[str], exchange: str = None):
                     data = await fetch_ohlcv_with_start("bitget", symbol, ccxt_clients["bitget"])
                     if data:
                         batch_results[coin]["bitget"] = data
-                        print(
-                            f"Fetched bitget {coin} => first candle: {data[0] if data else 'no data'}"
+                        logging.info(
+                            "Fetched bitget %s => first candle: %s", coin, data[0] if data else "no data"
                         )
                 except Exception as e:
-                    print(f"Warning: failed to fetch OHLCV for {coin} on bitget: {e}")
+                    logging.warning("failed to fetch OHLCV for %s on bitget: %s", coin, e)
 
             # Process results for each coin in this batch
             for coin in batch:
@@ -485,7 +498,7 @@ async def get_first_timestamps_unified(coins: List[str], exchange: str = None):
                 if earliest_candidates:
                     ftss[coin] = min(earliest_candidates)
                 else:
-                    print(f"No valid first timestamp for coin {coin}")
+                    logging.warning("No valid first timestamp for coin %s", coin)
                     ftss[coin] = 0.0
 
                 # Update the exchange-specific dictionary
@@ -498,7 +511,7 @@ async def get_first_timestamps_unified(coins: List[str], exchange: str = None):
             with open(cache_fpath_exchange_specific, "w") as f:
                 json.dump(ftss_exchange_specific, f, indent=4, sort_keys=True)
 
-            print(f"Finished batch {batch}. Caches updated.")
+            logging.info("Finished batch %s. Caches updated.", batch)
 
         # Close all ccxt client sessions
 
@@ -542,7 +555,7 @@ def load_ccxt_version():
         ccxt_line = [line for line in lines if "ccxt" in line][0].strip()
         return ccxt_line[ccxt_line.find("==") + 2 :]
     except Exception as e:
-        print(f"failed to load ccxt version {e}")
+        logging.error("failed to load ccxt version %s", e)
         return None
 
 

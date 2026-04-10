@@ -3,6 +3,7 @@ from passivbot import logging, clip_by_timestamp
 from uuid import uuid4
 import asyncio
 import ccxt
+import math
 from collections import defaultdict
 from utils import ts_to_date, utc_ms
 from config.access import require_live_value
@@ -18,89 +19,154 @@ class BybitBot(CCXTBot):
     def __init__(self, config: dict):
         super().__init__(config)
 
+    @staticmethod
+    def _is_enabled_flag(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, (int, float)):
+            return value != 0
+        text = str(value).strip().lower()
+        if text in {"", "0", "false", "off", "no", "none", "null"}:
+            return False
+        if text in {"1", "true", "on", "yes"}:
+            return True
+        return bool(text)
+
     # ═══════════════════ HOOK OVERRIDES ═══════════════════
 
     def _get_position_side_for_order(self, order: dict) -> str:
         """Bybit: Use determine_pos_side_ccxt helper."""
         return determine_pos_side_ccxt(order)
 
-    # ═══════════════════ BYBIT-SPECIFIC METHODS ═══════════════════
-
-    async def fetch_open_orders(self, symbol: str = None) -> list:
-        """Bybit: Handle nextPageCursor pagination."""
-        open_orders = {}
-        limit = 50
-        fetched = await self.cca.fetch_open_orders(symbol=symbol, limit=limit)
+    async def _paginate_with_cursor(self, fetch_page, limit: int, normalize_item) -> list[dict]:
+        fetched = await fetch_page(limit=limit, cursor=None)
+        items_by_key = {}
 
         while True:
-            if all(elm["id"] in open_orders for elm in fetched):
+            if not fetched:
                 break
+
             next_page_cursor = None
             for elm in fetched:
-                elm["position_side"] = self._get_position_side_for_order(elm)
-                elm["qty"] = elm["amount"]
-                self._record_live_margin_mode_from_payload(elm)
-                open_orders[elm["id"]] = elm
-                if "nextPageCursor" in elm.get("info", {}):
-                    next_page_cursor = elm["info"]["nextPageCursor"]
-            if len(fetched) < limit or next_page_cursor is None:
-                break
-            fetched = await self.cca.fetch_open_orders(
-                symbol=symbol, limit=limit, params={"cursor": next_page_cursor}
-            )
+                key = self._get_pagination_dedup_key(elm)
+                normalized = normalize_item(elm)
+                if normalized is not None and key is not None:
+                    items_by_key[key] = normalized
+                page_cursor = self._extract_next_page_cursor(elm)
+                if page_cursor:
+                    next_page_cursor = page_cursor
 
-        return sorted(open_orders.values(), key=lambda x: x["timestamp"])
+            if next_page_cursor is None:
+                break
+
+            fetched = await fetch_page(limit=limit, cursor=next_page_cursor)
+
+        return list(items_by_key.values())
+
+    def _extract_next_page_cursor(self, elm: dict) -> str | None:
+        info = elm.get("info", {})
+        if not isinstance(info, dict):
+            return None
+        cursor = info.get("nextPageCursor")
+        return str(cursor) if cursor else None
+
+    def _get_pagination_dedup_key(self, elm: dict) -> str | None:
+        if "id" in elm:
+            return str(elm["id"])
+        if "symbol" in elm and "side" in elm:
+            return f"{elm['symbol']}{elm['side']}"
+        return None
+
+    def _normalize_open_order_page_item(self, elm: dict) -> dict | None:
+        elm["position_side"] = self._get_position_side_for_order(elm)
+        elm["qty"] = elm["amount"]
+        self._record_live_margin_mode_from_payload(elm)
+        return elm
+
+    def _normalize_position_page_item(self, elm: dict) -> dict | None:
+        normalized = {
+            "symbol": elm["symbol"],
+            "position_side": elm.get("side", "long").lower(),
+            "size": float(elm["contracts"]),
+            "price": float(elm["entryPrice"]),
+        }
+        margin_mode = self._extract_live_margin_mode(elm)
+        if margin_mode is not None:
+            normalized["margin_mode"] = margin_mode
+        self._record_live_margin_mode(elm["symbol"], margin_mode)
+        return normalized
+
+    # ═══════════════════ BYBIT-SPECIFIC METHODS ═══════════════════
+
+    async def fetch_open_orders(self, symbol: str | None = None) -> list:
+        """Bybit: Handle nextPageCursor pagination."""
+        limit = 50
+
+        async def fetch_page(limit: int, cursor: str | None):
+            params = {"cursor": cursor} if cursor is not None else None
+            return await self.cca.fetch_open_orders(symbol=symbol, limit=limit, params=params)
+
+        items = await self._paginate_with_cursor(
+            fetch_page, limit=limit, normalize_item=self._normalize_open_order_page_item
+        )
+        return sorted(items, key=lambda x: x["timestamp"])
 
     async def fetch_positions(self) -> list:
         """Bybit: Handle nextPageCursor pagination."""
-        positions = {}
         limit = 200
-        fetched = await self.cca.fetch_positions(params={"limit": limit})
 
-        while True:
-            if all(elm["symbol"] + elm["side"] in positions for elm in fetched):
-                break
-            next_page_cursor = None
-            for elm in fetched:
-                key = elm["symbol"] + elm["side"]
-                normalized = {
-                    "symbol": elm["symbol"],
-                    "position_side": elm.get("side", "long").lower(),
-                    "size": float(elm["contracts"]),
-                    "price": float(elm["entryPrice"]),
-                }
-                margin_mode = self._extract_live_margin_mode(elm)
-                if margin_mode is not None:
-                    normalized["margin_mode"] = margin_mode
-                self._record_live_margin_mode(elm["symbol"], margin_mode)
-                positions[key] = normalized
-                if "nextPageCursor" in elm.get("info", {}):
-                    next_page_cursor = elm["info"]["nextPageCursor"]
-            if len(fetched) < limit or next_page_cursor is None:
-                break
-            fetched = await self.cca.fetch_positions(
-                params={"cursor": next_page_cursor, "limit": limit}
-            )
+        async def fetch_page(limit: int, cursor: str | None):
+            params: dict[str, int | str] = {"limit": limit}
+            if cursor is not None:
+                params["cursor"] = cursor
+            return await self.cca.fetch_positions(params=params)
 
-        return list(positions.values())
+        return await self._paginate_with_cursor(
+            fetch_page, limit=limit, normalize_item=self._normalize_position_page_item
+        )
 
     async def fetch_balance(self) -> float:
         """Bybit: Complex UNIFIED account balance calculation."""
         fetched_balance = await self.cca.fetch_balance()
-        balinfo = fetched_balance["info"]["result"]["list"][0]
+        info = fetched_balance.get("info")
+        if not isinstance(info, dict):
+            raise KeyError("bybit: missing info payload in fetch_balance response")
+        result = info.get("result")
+        if not isinstance(result, dict):
+            raise KeyError("bybit: missing result payload in fetch_balance response")
+        accounts = result.get("list")
+        if not isinstance(accounts, list) or not accounts:
+            raise KeyError("bybit: missing account list in fetch_balance response")
+        balinfo = accounts[0]
+        if not isinstance(balinfo, dict):
+            raise TypeError("bybit: account payload must be a dict")
         if balinfo["accountType"] == "UNIFIED":
             balance = 0.0
-            for elm in balinfo["coin"]:
-                if elm["marginCollateral"] and elm["collateralSwitch"]:
-                    balance += float(elm["usdValue"]) + float(elm["unrealisedPnl"])
+            coins = balinfo.get("coin")
+            if not isinstance(coins, list):
+                raise KeyError("bybit: unified account payload missing coin list")
+            for elm in coins:
+                if not isinstance(elm, dict):
+                    continue
+                if self._is_enabled_flag(elm.get("marginCollateral")) and self._is_enabled_flag(
+                    elm.get("collateralSwitch")
+                ):
+                    balance += float(elm.get("usdValue") or 0.0) + float(
+                        elm.get("unrealisedPnl") or 0.0
+                    )
         else:
-            balance = fetched_balance[self.quote]["total"]
+            quote_payload = fetched_balance.get(self.quote)
+            if not isinstance(quote_payload, dict) or "total" not in quote_payload:
+                raise KeyError(f"bybit: missing non-unified quote balance for {self.quote}")
+            balance = quote_payload["total"]
         return balance
 
     async def fetch_pnls_sub(
         self,
-        start_time: int = None,
-        end_time: int = None,
+        start_time: int | None = None,
+        end_time: int | None = None,
     ):
         if start_time is None:
             pnls = await self.fetch_pnl(start_time=start_time, end_time=end_time)
@@ -109,26 +175,23 @@ class BybitBot(CCXTBot):
             pnls = []
             if end_time is None:
                 end_time = int(self.get_exchange_time() + 1000 * 60 * 60 * 24)
-            # bybit has limit of 7 days per paginated fetch
-            # fetch multiple times
-            i = 1
-            while i < 52:  # limit n fetches to 52 (one year)
-                sts = end_time - week * i
-                ets = sts + week
-                sts = max(sts, start_time)
+            span_ms = max(0, int(end_time) - int(start_time))
+            n_windows = max(1, math.ceil(span_ms / week))
+            for i in range(n_windows):
+                sts = max(int(start_time), int(end_time) - week * (i + 1))
+                ets = min(int(end_time), sts + week)
                 fetched = await self.fetch_pnl(start_time=sts, end_time=ets)
                 pnls.extend(fetched)
                 if sts <= start_time:
                     break
-                i += 1
                 logging.info(f"fetched pnls for more than a week {ts_to_date(sts)}")
         return sorted(pnls, key=lambda x: x["timestamp"])
 
     async def fetch_pnl(
         self,
-        start_time: int = None,
-        end_time: int = None,
-        limit: int = None,
+        start_time: int | None = None,
+        end_time: int | None = None,
+        limit: int | None = None,
     ):
         fetched = None
         all_pnls = []
@@ -227,7 +290,7 @@ class BybitBot(CCXTBot):
             x["position_side"] = self.determine_pos_side(x)
             x["pnl"] = 0.0
             fillsd[x["orderId"]].append(x)
-        pnls_ids = set()
+        pnls_ids: set[str] = set()
         for x in pnls:
             pnls_ids.add(x["orderId"])
             if x["orderId"] in fillsd:

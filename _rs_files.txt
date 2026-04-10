@@ -1,0 +1,14 @@
+C:\passivbot\passivbot-rust\src\analysis.rs
+C:\passivbot\passivbot-rust\src\backtest.rs
+C:\passivbot\passivbot-rust\src\closes.rs
+C:\passivbot\passivbot-rust\src\coin_selection.rs
+C:\passivbot\passivbot-rust\src\constants.rs
+C:\passivbot\passivbot-rust\src\entries.rs
+C:\passivbot\passivbot-rust\src\equity_hard_stop_loss.rs
+C:\passivbot\passivbot-rust\src\lib.rs
+C:\passivbot\passivbot-rust\src\orchestrator.rs
+C:\passivbot\passivbot-rust\src\python.rs
+C:\passivbot\passivbot-rust\src\risk.rs
+C:\passivbot\passivbot-rust\src\trailing.rs
+C:\passivbot\passivbot-rust\src\types.rs
+C:\passivbot\passivbot-rust\src\utils.rs

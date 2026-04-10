@@ -1,0 +1,12 @@
+C:\passivbot\src\exchanges\binance.py
+C:\passivbot\src\exchanges\bitget.py
+C:\passivbot\src\exchanges\bybit.py
+C:\passivbot\src\exchanges\ccxt_bot.py
+C:\passivbot\src\exchanges\defx.py
+C:\passivbot\src\exchanges\fake.py
+C:\passivbot\src\exchanges\gateio.py
+C:\passivbot\src\exchanges\hyperliquid.py
+C:\passivbot\src\exchanges\kucoin.py
+C:\passivbot\src\exchanges\okx.py
+C:\passivbot\src\exchanges\paradex.py
+C:\passivbot\src\exchanges\__init__.py
