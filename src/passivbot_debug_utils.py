@@ -15,4 +15,4 @@ def log_once(self, msg: str):
 def debug_print(self, *args):
     """Emit debug output only when the instance is in debug mode."""
     if hasattr(self, "debug_mode") and self.debug_mode:
-        print(*args)
+        logging.debug(" ".join(str(arg) for arg in args))

@@ -35,6 +35,44 @@ def test_normalize_trade_builds_expected_payload(monkeypatch):
     assert result["raw"][0]["source"] == "fetch_my_trades"
 
 
+def test_normalize_trade_missing_qty_raises_value_error():
+    trade = {
+        "id": "t1",
+        "order": "o1",
+        "timestamp": 1000,
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "price": 10.0,
+        "info": {},
+    }
+
+    try:
+        kucoin_utils.normalize_trade(trade)
+        assert False, "Expected ValueError for missing qty"
+    except ValueError as e:
+        assert "KuCoin trade missing required qty/price" in str(e)
+        assert "trade_id=t1" in str(e)
+
+
+def test_normalize_trade_missing_price_raises_value_error():
+    trade = {
+        "id": "t1",
+        "order": "o1",
+        "timestamp": 1000,
+        "symbol": "BTC/USDT:USDT",
+        "side": "buy",
+        "amount": 2.0,
+        "info": {},
+    }
+
+    try:
+        kucoin_utils.normalize_trade(trade)
+        assert False, "Expected ValueError for missing price"
+    except ValueError as e:
+        assert "KuCoin trade missing required qty/price" in str(e)
+        assert "trade_id=t1" in str(e)
+
+
 def test_apply_cached_order_details_reuses_trade_and_order_cache():
     events = [
         {"id": "t1", "order_id": "o1", "client_order_id": "", "pb_order_type": ""},

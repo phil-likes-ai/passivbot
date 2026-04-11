@@ -32,6 +32,18 @@ def determine_position_side(side: str, pos_side_raw: str, pnl: float) -> str:
     return "long" if side == "buy" else "short"
 
 
+def _require_okx_fill_float(
+    raw: dict, key: str, field_name: str, trade_id: str, order_id: str
+) -> float:
+    value = raw.get(key)
+    if value in (None, ""):
+        raise ValueError(
+            f"OKX fill missing required {field_name} source '{key}' "
+            f"for trade_id='{trade_id}' order_id='{order_id}'"
+        )
+    return float(value)
+
+
 def normalize_fill(raw: dict) -> dict:
     trade_id = str(raw.get("tradeId") or "")
     order_id = str(raw.get("ordId") or "")
@@ -40,6 +52,8 @@ def normalize_fill(raw: dict) -> dict:
     pnl = float(raw.get("fillPnl") or 0.0)
     fee_ccy = str(raw.get("feeCcy") or "")
     fee_amt = float(raw.get("fee") or 0.0)
+    qty = abs(_require_okx_fill_float(raw, "fillSz", "qty", trade_id, order_id))
+    price = _require_okx_fill_float(raw, "fillPx", "price", trade_id, order_id)
 
     return {
         "id": trade_id,
@@ -48,8 +62,8 @@ def normalize_fill(raw: dict) -> dict:
         "datetime": ts_to_date(timestamp) if timestamp else "",
         "symbol": normalize_inst_id(str(raw.get("instId") or "")),
         "side": side,
-        "qty": abs(float(raw.get("fillSz") or 0.0)),
-        "price": float(raw.get("fillPx") or 0.0),
+        "qty": qty,
+        "price": price,
         "pnl": pnl,
         "fees": {"currency": fee_ccy, "cost": abs(fee_amt)} if fee_ccy else None,
         "pb_order_type": "",

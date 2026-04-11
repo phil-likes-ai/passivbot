@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
 import math
 from typing import Callable, Dict, Optional, Tuple
+
+
+logger = logging.getLogger(__name__)
 
 
 def compute_live_warmup_windows(
@@ -36,6 +40,11 @@ def compute_live_warmup_windows(
         try:
             ratio = float(warmup_ratio)
         except Exception:
+            logger.debug(
+                "[warmup] invalid warmup_ratio; defaulting to 0.0",
+                extra={"warmup_ratio": warmup_ratio},
+                exc_info=True,
+            )
             ratio = 0.0
         span_buffer = 1.0 + max(0.0, ratio)
 
@@ -43,6 +52,11 @@ def compute_live_warmup_windows(
     try:
         cap_minutes = int(max_warmup_minutes) if max_warmup_minutes is not None else None
     except Exception:
+        logger.debug(
+            "[warmup] invalid max_warmup_minutes; defaulting to None",
+            extra={"max_warmup_minutes": max_warmup_minutes},
+            exc_info=True,
+        )
         cap_minutes = None
     if cap_minutes is not None and cap_minutes <= 0:
         cap_minutes = None
@@ -54,12 +68,22 @@ def compute_live_warmup_windows(
         try:
             return float(val)
         except Exception:
+            logger.debug(
+                "[warmup] invalid warmup lookup value; defaulting to 0.0",
+                extra={"value": val},
+                exc_info=True,
+            )
             return 0.0
 
     def _get_bp(pside: str, key: str, sym: str) -> float:
         try:
             return _to_float(bp_lookup(pside, key, sym))
         except Exception:
+            logger.debug(
+                "[warmup] bp lookup failed; defaulting to 0.0",
+                extra={"position_side": pside, "key": key, "symbol": sym},
+                exc_info=True,
+            )
             return 0.0
 
     if window_candles is not None:

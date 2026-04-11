@@ -41,6 +41,11 @@ def snake_of(type_id: int) -> str:
     try:
         return pbr.order_type_id_to_snake(type_id)
     except Exception:
+        logging.debug(
+            "[order] failed to map order type id to snake_case; type_id=%s",
+            type_id,
+            exc_info=True,
+        )
         return "unknown"
 
 
@@ -48,7 +53,7 @@ def custom_id_to_snake(custom_id) -> str:
     """Translate a broker custom id into the snake_case order type name."""
     type_id = try_decode_type_id_from_custom_id(custom_id)
     if type_id is None:
-        logging.error("failed to convert custom_id %s to str order_type", custom_id)
+        logging.error("[order] order type decode failed; custom_id=%s; reason=invalid_custom_id", custom_id)
         return "unknown"
     return snake_of(type_id)
 
@@ -100,10 +105,7 @@ def has_open_unstuck_order(self) -> bool:
             type_id = try_decode_type_id_from_custom_id(custom_id)
             if type_id is None:
                 continue
-            try:
-                order_type = snake_of(type_id)
-            except Exception:
-                continue
+            order_type = snake_of(type_id)
             if order_type in {"close_unstuck_long", "close_unstuck_short"}:
                 return True
     return False

@@ -43,6 +43,40 @@ def test_normalize_fill_builds_expected_payload(monkeypatch):
     assert result["fees"] == {"currency": "USDT", "cost": 0.2}
 
 
+def test_normalize_fill_raises_for_missing_qty_source():
+    raw = {
+        "tradeId": "t1",
+        "ordId": "o1",
+        "fillPx": 100.0,
+    }
+
+    try:
+        okx_utils.normalize_fill(raw)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert str(exc) == (
+            "OKX fill missing required qty source 'fillSz' "
+            "for trade_id='t1' order_id='o1'"
+        )
+
+
+def test_normalize_fill_raises_for_missing_price_source():
+    raw = {
+        "tradeId": "t1",
+        "ordId": "o1",
+        "fillSz": 2.0,
+    }
+
+    try:
+        okx_utils.normalize_fill(raw)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert str(exc) == (
+            "OKX fill missing required price source 'fillPx' "
+            "for trade_id='t1' order_id='o1'"
+        )
+
+
 def test_apply_order_detail_cache_prefers_cache_then_derives_and_persists():
     event = {"id": "t1", "client_order_id": "cid", "pb_order_type": ""}
     detail_cache = {}

@@ -13,12 +13,12 @@ def set_market_specific_settings(self):
 
 def get_symbol_id(self, symbol):
     """Return the exchange-native identifier for `symbol`, caching defaults."""
-    try:
+    if symbol in self.symbol_ids:
         return self.symbol_ids[symbol]
-    except Exception:
-        logging.debug("symbol %s missing from self.symbol_ids. Using raw symbol.", symbol)
-        self.symbol_ids[symbol] = symbol
-        return symbol
+
+    logging.debug("symbol %s missing from self.symbol_ids. Using raw symbol.", symbol)
+    self.symbol_ids[symbol] = symbol
+    return symbol
 
 
 def to_ccxt_symbol(self, symbol: str) -> str:
@@ -27,11 +27,19 @@ def to_ccxt_symbol(self, symbol: str) -> str:
     try:
         candidates.append(self.get_symbol_id_inv(symbol))
     except Exception:
-        pass
+        logging.debug(
+            "to_ccxt_symbol get_symbol_id_inv failed for %s; trying coin_to_symbol next",
+            symbol,
+            exc_info=True,
+        )
     try:
         candidates.append(self.coin_to_symbol(symbol))
     except Exception:
-        pass
+        logging.debug(
+            "to_ccxt_symbol coin_to_symbol failed for %s; falling back to raw symbol",
+            symbol,
+            exc_info=True,
+        )
     if candidates:
         return candidates[0]
     logging.info("failed to convert %s to ccxt symbol. Using %s as is.", symbol, symbol)
@@ -40,12 +48,18 @@ def to_ccxt_symbol(self, symbol: str) -> str:
 
 def get_symbol_id_inv(self, symbol):
     """Return the human-friendly symbol for an exchange-native identifier."""
+    if symbol in self.symbol_ids_inv:
+        return self.symbol_ids_inv[symbol]
+
     try:
-        if symbol in self.symbol_ids_inv:
-            return self.symbol_ids_inv[symbol]
         return self.coin_to_symbol(symbol)
     except Exception:
-        logging.info("failed to convert %s to ccxt symbol. Using %s as is.", symbol, symbol)
+        logging.info(
+            "failed to convert %s to ccxt symbol. Using %s as is.",
+            symbol,
+            symbol,
+            exc_info=True,
+        )
         self.symbol_ids_inv[symbol] = symbol
         return symbol
 

@@ -23,6 +23,6 @@ def get_last_position_changes(self, symbol=None):
                         if ev.symbol == sym and ev.position_side == pside:
                             last_position_changes[sym][pside] = ev.timestamp
                             break
-                    except Exception as e:
-                        logging.error(f"Error in get_last_position_changes: {e}")
+                    except Exception:
+                        logging.exception("Error in get_last_position_changes")
     return last_position_changes

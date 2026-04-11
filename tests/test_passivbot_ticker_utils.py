@@ -1,5 +1,6 @@
 import types
 from importlib import import_module
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -42,3 +43,18 @@ async def test_update_tickers_fetches_and_normalizes():
     await pb_ticker_utils.update_tickers(bot)
 
     assert bot.tickers["BTC/USDT:USDT"]["last"] == 101.0
+
+
+@pytest.mark.asyncio
+async def test_update_tickers_logs_exception_and_preserves_existing_state_on_fetch_failure(caplog):
+    existing_tickers = {"BTC/USDT:USDT": {"bid": 99.0, "ask": 101.0, "last": 100.0}}
+    bot = types.SimpleNamespace(
+        tickers=existing_tickers,
+        cca=types.SimpleNamespace(fetch_tickers=AsyncMock(side_effect=RuntimeError("boom"))),
+    )
+
+    with caplog.at_level(logging.ERROR):
+        await pb_ticker_utils.update_tickers(bot)
+
+    assert bot.tickers is existing_tickers
+    assert any(record.exc_info for record in caplog.records)

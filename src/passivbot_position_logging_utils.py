@@ -81,6 +81,12 @@ async def log_position_changes(self, positions_old, positions_new, rd=6):
                 else 0.0
             )
         except Exception:
+            logging.debug(
+                "[pos] failed to calculate pprice diff for %s %s",
+                symbol,
+                pside,
+                exc_info=True,
+            )
             pprice_diff = 0.0
 
         try:
@@ -90,6 +96,12 @@ async def log_position_changes(self, positions_old, positions_new, rd=6):
                 else 0.0
             )
         except Exception:
+            logging.debug(
+                "[pos] failed to calculate upnl for %s %s",
+                symbol,
+                pside,
+                exc_info=True,
+            )
             upnl = 0.0
 
         coin = symbol_to_coin(symbol, verbose=False) or symbol

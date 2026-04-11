@@ -7,6 +7,13 @@ import pytest
 gateio_utils = import_module("fill_events_gateio_utils")
 
 
+def test_normalize_raw_trade_missing_price_raises():
+    with pytest.raises(ValueError, match="Gate.io fill missing required 'price' field"):
+        gateio_utils.normalize_raw_trade(
+            {"trade_id": "1", "order_id": "o1", "create_time": 1.0, "contract": "BTC_USDT", "size": -2, "fee": 1}
+        )
+
+
 def test_normalize_raw_trade_builds_ccxt_like_payload():
     result = gateio_utils.normalize_raw_trade(
         {"trade_id": "1", "order_id": "o1", "create_time": 1.0, "contract": "BTC_USDT", "size": -2, "price": 100, "fee": 1}
@@ -17,6 +24,30 @@ def test_normalize_raw_trade_builds_ccxt_like_payload():
     assert result["symbol"] == "BTC/USDT:USDT"
     assert result["side"] == "sell"
     assert result["amount"] == 2.0
+
+
+def test_normalize_trade_missing_qty_raises(monkeypatch):
+    monkeypatch.setattr(gateio_utils, "ts_to_date", lambda ts: f"T{ts}")
+    fetcher = type("F", (), {"ensure_millis": staticmethod(lambda x: x)})()
+    detail_cache = {}
+
+    trade = {"id": "t1", "order": "o1", "timestamp": 1000, "symbol": "BTC/USDT:USDT", "side": "buy", "price": 100.0, "fee": {"cost": 1.0}, "info": {}}
+    order = {"info": {}}
+
+    with pytest.raises(ValueError, match="Gate.io fill missing required 'qty' field"):
+        gateio_utils.normalize_trade(fetcher, trade, order, 4.0, 2.0, detail_cache)
+
+
+def test_normalize_trade_missing_price_raises(monkeypatch):
+    monkeypatch.setattr(gateio_utils, "ts_to_date", lambda ts: f"T{ts}")
+    fetcher = type("F", (), {"ensure_millis": staticmethod(lambda x: x)})()
+    detail_cache = {}
+
+    trade = {"id": "t1", "order": "o1", "timestamp": 1000, "symbol": "BTC/USDT:USDT", "side": "buy", "amount": 2.0, "fee": {"cost": 1.0}, "info": {}}
+    order = {"info": {}}
+
+    with pytest.raises(ValueError, match="Gate.io fill missing required 'price' field"):
+        gateio_utils.normalize_trade(fetcher, trade, order, 4.0, 2.0, detail_cache)
 
 
 def test_merge_trades_with_orders_groups_by_order():

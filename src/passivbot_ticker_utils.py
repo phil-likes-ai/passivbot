@@ -25,5 +25,5 @@ async def update_tickers(self):
     try:
         tickers = await self.cca.fetch_tickers()
         self.tickers = normalize_tickers(tickers)
-    except Exception as e:
-        logging.error("Error with update_tickers %s", e)
+    except Exception:
+        logging.exception("Error with update_tickers")

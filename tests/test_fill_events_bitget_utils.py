@@ -2,6 +2,8 @@ from importlib import import_module
 import asyncio
 import types
 
+import pytest
+
 
 bitget_utils = import_module("fill_events_bitget_utils")
 
@@ -108,3 +110,61 @@ def test_build_batch_events_and_process_fill_batch():
     assert detail_fetches == 1
     assert bitget_utils.build_batch_events(events, batch_ids)[0]["client_order_id"] == "cid1"
     assert cache["t2"] == ("cid2", "kind2")
+
+
+def test_normalize_fill_raises_for_missing_qty():
+    fetcher = types.SimpleNamespace(_symbol_resolver=lambda value: "BTC/USDT:USDT")
+
+    with pytest.raises(ValueError, match=r"Bitget fill missing required qty source 'baseVolume'"):
+        bitget_utils.normalize_fill(
+            fetcher,
+            {
+                "tradeId": "t1",
+                "orderId": "o1",
+                "cTime": 1000,
+                "symbol": "BTCUSDT",
+                "price": 10.0,
+            },
+            lambda raw: ("buy", "long"),
+        )
+
+
+def test_normalize_fill_raises_for_missing_price():
+    fetcher = types.SimpleNamespace(_symbol_resolver=lambda value: "BTC/USDT:USDT")
+
+    with pytest.raises(ValueError, match=r"Bitget fill missing required price source 'price'"):
+        bitget_utils.normalize_fill(
+            fetcher,
+            {
+                "tradeId": "t1",
+                "orderId": "o1",
+                "cTime": 1000,
+                "symbol": "BTCUSDT",
+                "baseVolume": 2.0,
+            },
+            lambda raw: ("buy", "long"),
+        )
+
+
+def test_normalize_fill_valid_path_unchanged(monkeypatch):
+    monkeypatch.setattr(bitget_utils, "ts_to_date", lambda ts: f"T{ts}")
+    fetcher = types.SimpleNamespace(_symbol_resolver=lambda value: "BTC/USDT:USDT")
+
+    result = bitget_utils.normalize_fill(
+        fetcher,
+        {
+            "tradeId": "t1",
+            "orderId": "o1",
+            "cTime": 1000,
+            "symbol": "BTCUSDT",
+            "baseVolume": 2.0,
+            "price": 10.0,
+            "profit": 1.5,
+            "feeDetail": {"fee": 0.1},
+        },
+        lambda raw: ("buy", "long"),
+    )
+
+    assert result["id"] == "t1"
+    assert result["qty"] == 2.0
+    assert result["price"] == 10.0

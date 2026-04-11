@@ -16,8 +16,14 @@ def normalize_trade(trade: dict) -> dict:
     )
     symbol_raw = trade.get("symbol") or info.get("symbol") or info.get("coin")
     side = str(trade.get("side") or info.get("side") or "").lower()
-    qty = abs(float(trade.get("amount") or info.get("sz") or 0.0))
-    price = float(trade.get("price") or info.get("px") or 0.0)
+    qty_source = trade.get("amount") or info.get("sz")
+    if qty_source is None:
+        raise ValueError(f"Hyperliquid fill missing required qty: trade keys {list(trade.keys())}, info keys {list(info.keys())}")
+    qty = abs(float(qty_source))
+    price_source = trade.get("price") or info.get("px")
+    if price_source is None:
+        raise ValueError(f"Hyperliquid fill missing required price: trade keys {list(trade.keys())}, info keys {list(info.keys())}")
+    price = float(price_source)
     pnl = float(trade.get("pnl") or info.get("closedPnl") or 0.0)
     fee = trade.get("fee") or {"currency": info.get("feeToken"), "cost": info.get("fee")}
     client_order_id = trade.get("clientOrderId") or info.get("cloid") or info.get("clOrdId") or ""

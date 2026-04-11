@@ -34,6 +34,25 @@ def _as_float(value: object) -> float:
     return 0.0
 
 
+def _require_bitget_fill_float(
+    raw: Dict[str, object], key: str, field_name: str, trade_id: str
+) -> float:
+    value = raw.get(key)
+    if value in (None, ""):
+        raise ValueError(
+            f"Bitget fill missing required {field_name} source '{key}' "
+            f"for trade_id='{trade_id}'"
+        )
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        return float(value)
+    raise ValueError(
+        f"Bitget fill invalid type for {field_name} source '{key}' "
+        f"for trade_id='{trade_id}': {type(value)}"
+    )
+
+
 def resolve_symbol(fetcher, market_symbol: Optional[str]) -> str:
     if not market_symbol:
         return ""
@@ -58,16 +77,19 @@ def resolve_symbol(fetcher, market_symbol: Optional[str]) -> str:
 def normalize_fill(fetcher, raw: Dict[str, object], deduce_side_pside_fn) -> Dict[str, object]:
     timestamp = _as_int(raw.get("cTime"))
     side, position_side = deduce_side_pside_fn(raw)
+    trade_id = _as_str(raw.get("tradeId"))
+    qty = _require_bitget_fill_float(raw, "baseVolume", "qty", trade_id)
+    price = _require_bitget_fill_float(raw, "price", "price", trade_id)
     return {
-        "id": raw.get("tradeId"),
+        "id": trade_id,
         "order_id": raw.get("orderId"),
         "timestamp": timestamp,
         "datetime": ts_to_date(timestamp),
         "symbol": resolve_symbol(fetcher, _as_str(raw.get("symbol"))),
         "symbol_external": raw.get("symbol"),
         "side": side,
-        "qty": _as_float(raw.get("baseVolume")),
-        "price": _as_float(raw.get("price")),
+        "qty": qty,
+        "price": price,
         "pnl": _as_float(raw.get("profit")),
         "fees": raw.get("feeDetail"),
         "pb_order_type": raw.get("pb_order_type", ""),

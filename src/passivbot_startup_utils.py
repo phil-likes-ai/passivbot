@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 
 import asyncio
@@ -10,14 +11,41 @@ from config.access import get_optional_live_value
 from utils import format_approved_ignored_coins, utc_ms
 
 
+def _require_total_wallet_exposure_limit(self, position_side: str) -> float:
+    """Return a required finite TWEL value or raise with actionable context."""
+    try:
+        raw_value = self.bot_value(position_side, "total_wallet_exposure_limit")
+    except KeyError as exc:
+        raise ValueError(
+            f"Missing required {position_side} total_wallet_exposure_limit in startup banner config"
+        ) from exc
+    if raw_value is None or raw_value == "":
+        raise ValueError(
+            f"Missing required {position_side} total_wallet_exposure_limit in startup banner config"
+        )
+    try:
+        twel = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid {position_side} total_wallet_exposure_limit in startup banner config: {raw_value!r}"
+        ) from exc
+    if not math.isfinite(twel):
+        raise ValueError(
+            f"Invalid {position_side} total_wallet_exposure_limit in startup banner config: {raw_value!r}"
+        )
+    return twel
+
+
 def log_startup_banner(self) -> None:
     """Log a startup banner with key configuration info."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     user = self.user
     exchange = self.exchange
 
-    long_enabled = float(self.bot_value("long", "total_wallet_exposure_limit") or 0.0) > 0.0
-    short_enabled = float(self.bot_value("short", "total_wallet_exposure_limit") or 0.0) > 0.0
+    twel_long = _require_total_wallet_exposure_limit(self, "long")
+    twel_short = _require_total_wallet_exposure_limit(self, "short")
+    long_enabled = twel_long > 0.0
+    short_enabled = twel_short > 0.0
     if long_enabled and short_enabled:
         mode = "LONG + SHORT"
     elif long_enabled:
@@ -33,8 +61,6 @@ def log_startup_banner(self) -> None:
     if short_enabled:
         n_pos = f"{n_pos}/{n_pos_short}S" if n_pos else f"{n_pos_short}S"
 
-    twel_long = float(self.bot_value("long", "total_wallet_exposure_limit") or 0.0)
-    twel_short = float(self.bot_value("short", "total_wallet_exposure_limit") or 0.0)
     if long_enabled and short_enabled:
         twel_str = f"L:{twel_long:.0%} S:{twel_short:.0%}"
     elif long_enabled:
@@ -71,6 +97,11 @@ async def maybe_apply_boot_stagger(self) -> None:
             raise TypeError(boot_stagger)
         boot_stagger = float(stagger_value) if stagger_value is not None else 0.0
     except Exception:
+        logging.debug(
+            "[boot] invalid boot_stagger_seconds config; defaulting to 0.0",
+            extra={"boot_stagger_seconds": boot_stagger},
+            exc_info=True,
+        )
         boot_stagger = 0.0
     if boot_stagger > 0:
         delay = random.uniform(0, boot_stagger)
@@ -135,7 +166,7 @@ async def run_startup_preloop(self, set_stage) -> bool:
     try:
         await self.warmup_candles_staggered()
     except Exception as e:
-        logging.info("[boot] warmup skipped due to: %s", e)
+        logging.info("[boot] warmup skipped due to exception", exc_info=e)
 
     if self._equity_hard_stop_enabled():
         set_stage("equity_hard_stop_initialize_from_history")

@@ -1,3 +1,4 @@
+import logging
 import sys
 import types
 from importlib import import_module
@@ -21,6 +22,7 @@ order_utils = import_module("passivbot_order_utils")
 custom_id_to_snake = order_utils.custom_id_to_snake
 has_open_unstuck_order = order_utils.has_open_unstuck_order
 order_to_order_tuple = order_utils.order_to_order_tuple
+snake_of = order_utils.snake_of
 trailing_bundle_default_dict = order_utils.trailing_bundle_default_dict
 trailing_bundle_from_arrays = order_utils.trailing_bundle_from_arrays
 try_decode_type_id_from_custom_id = order_utils.try_decode_type_id_from_custom_id
@@ -33,10 +35,28 @@ def test_try_decode_type_id_from_custom_id_supports_marker_and_leading_hex():
 
 
 def test_custom_id_to_snake_returns_unknown_for_invalid_id(caplog):
-    result = custom_id_to_snake("invalid")
+    with caplog.at_level(logging.ERROR):
+        result = custom_id_to_snake("invalid")
 
     assert result == "unknown"
-    assert "failed to convert custom_id" in caplog.text
+    assert caplog.messages == [
+        "[order] order type decode failed; custom_id=invalid; reason=invalid_custom_id"
+    ]
+
+
+def test_snake_of_returns_unknown_and_logs_debug_context_on_mapping_failure(monkeypatch, caplog):
+    def raise_mapping_failure(type_id):
+        raise RuntimeError(f"boom {type_id}")
+
+    monkeypatch.setattr(order_utils.pbr, "order_type_id_to_snake", raise_mapping_failure)
+
+    with caplog.at_level(logging.DEBUG):
+        result = snake_of(255)
+
+    assert result == "unknown"
+    assert "failed to map order type id to snake_case" in caplog.text
+    assert "type_id=255" in caplog.text
+    assert any(record.exc_info for record in caplog.records)
 
 
 def test_trailing_bundle_helpers_return_expected_dicts():
@@ -85,3 +105,10 @@ def test_has_open_unstuck_order_detects_unstuck_custom_ids(monkeypatch):
     bot = types.SimpleNamespace(open_orders={"BTC/USDT:USDT": [{"custom_id": "0x00ff_demo"}]})
 
     assert has_open_unstuck_order(bot) is True
+
+
+def test_has_open_unstuck_order_ignores_unknown_snake_result(monkeypatch):
+    monkeypatch.setattr(order_utils, "snake_of", lambda type_id: "unknown")
+    bot = types.SimpleNamespace(open_orders={"BTC/USDT:USDT": [{"custom_id": "0x00ff_demo"}]})
+
+    assert has_open_unstuck_order(bot) is False

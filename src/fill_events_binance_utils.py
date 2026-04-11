@@ -90,14 +90,20 @@ def normalize_trade(fetcher, trade: Dict[str, object]) -> Dict[str, object]:
     if isinstance(symbol, str) and "/" not in symbol:
         symbol = resolve_symbol(fetcher, symbol)
     order_id = trade.get("order") or info.get("orderId") or info.get("origClientOrderId") or info.get("orderID")
+    qty_source = trade.get("amount") or trade.get("qty")
+    if qty_source is None:
+        raise ValueError("Binance trade normalization: missing required qty (check 'amount' or 'qty' fields)")
+    price_source = trade.get("price")
+    if price_source is None:
+        raise ValueError("Binance trade normalization: missing required price (check 'price' field)")
     return {
         "id": str(trade_id),
         "timestamp": timestamp,
         "datetime": _ts_to_date(timestamp),
         "symbol": _as_str(symbol),
         "side": trade.get("side") or "",
-        "qty": _as_float(trade.get("amount") or trade.get("qty")),
-        "price": _as_float(trade.get("price")),
+        "qty": _as_float(qty_source),
+        "price": _as_float(price_source),
         "pnl": pnl,
         "fees": fees,
         "pb_order_type": "",

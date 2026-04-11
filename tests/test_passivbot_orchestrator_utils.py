@@ -1,5 +1,7 @@
 from importlib import import_module
 
+import pytest
+
 
 pb_orchestrator_utils = import_module("passivbot_orchestrator_utils")
 
@@ -58,6 +60,32 @@ def test_build_symbol_input_wires_fields():
     assert symbol_input["emas"]["m1"]["close"] == [[2.0, 3.0]]
     assert symbol_input["emas"]["h1"]["log_range"] == [[6.0, 7.0]]
     assert symbol_input["long"]["mode"] == "long"
+
+
+def test_get_required_market_fee_returns_explicit_fee():
+    fee = pb_orchestrator_utils.get_required_market_fee(
+        markets_dict={"BTC/USDT:USDT": {"maker": 0.0002, "taker": 0.0006}},
+        symbol="BTC/USDT:USDT",
+        fee_side="maker",
+    )
+
+    assert fee == 0.0002
+
+
+@pytest.mark.parametrize(
+    ("market", "fee_side", "expected_message"),
+    [
+        ({"taker": 0.0006}, "maker", "missing required maker_fee for BTC/USDT:USDT"),
+        ({"maker": 0.0002}, "taker", "missing required taker_fee for BTC/USDT:USDT"),
+    ],
+)
+def test_get_required_market_fee_raises_on_missing_fee_side(market, fee_side, expected_message):
+    with pytest.raises(KeyError, match=expected_message):
+        pb_orchestrator_utils.get_required_market_fee(
+            markets_dict={"BTC/USDT:USDT": market},
+            symbol="BTC/USDT:USDT",
+            fee_side=fee_side,
+        )
 
 
 def test_build_orchestrator_input_base_wires_global():

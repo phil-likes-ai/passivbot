@@ -1,3 +1,4 @@
+import logging
 from importlib import import_module
 
 
@@ -38,19 +39,40 @@ def test_compute_live_warmup_windows_uses_forager_spans_when_enabled():
     assert skip == {"BTC/USDT:USDT": True}
 
 
-def test_compute_live_warmup_windows_handles_bad_lookup_values():
+def test_compute_live_warmup_windows_logs_invalid_inputs_and_preserves_fallbacks(caplog):
     def bad_lookup(pside, key, sym):
         if key == "ema_span_0":
             return "bad"
         raise RuntimeError("boom")
 
-    wins, h1_hours, skip = compute_live_warmup_windows(
-        {"long": {"BTC/USDT:USDT"}, "short": set()},
-        bad_lookup,
-        warmup_ratio="bad",
-        max_warmup_minutes="bad",
-    )
+    with caplog.at_level(logging.DEBUG):
+        wins, h1_hours, skip = compute_live_warmup_windows(
+            {"long": {"BTC/USDT:USDT"}, "short": set()},
+            bad_lookup,
+            warmup_ratio="bad",
+            max_warmup_minutes="bad",
+        )
 
     assert wins == {"BTC/USDT:USDT": 1}
     assert h1_hours == {"BTC/USDT:USDT": 0}
     assert skip == {"BTC/USDT:USDT": True}
+    assert any(record.exc_info for record in caplog.records)
+    assert any("invalid warmup_ratio" in record.getMessage() for record in caplog.records)
+    assert any("invalid max_warmup_minutes" in record.getMessage() for record in caplog.records)
+
+
+def test_compute_live_warmup_windows_logs_bp_lookup_failures_and_preserves_fallbacks(caplog):
+    def failing_lookup(pside, key, sym):
+        raise RuntimeError(f"boom for {pside}/{key}/{sym}")
+
+    with caplog.at_level(logging.DEBUG):
+        wins, h1_hours, skip = compute_live_warmup_windows(
+            {"long": {"BTC/USDT:USDT"}, "short": set()},
+            failing_lookup,
+        )
+
+    assert wins == {"BTC/USDT:USDT": 1}
+    assert h1_hours == {"BTC/USDT:USDT": 0}
+    assert skip == {"BTC/USDT:USDT": True}
+    assert any(record.exc_info for record in caplog.records)
+    assert any("bp lookup failed" in record.getMessage() for record in caplog.records)

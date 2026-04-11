@@ -74,3 +74,39 @@ def test_finalize_merged_events_applies_defaults_and_persists_cache():
     assert merged["e1"]["pb_order_type"] == "kind:cid"
     assert merged["e2"]["client_order_id"] == ""
     assert detail_cache["e1"] == ("cid", "kind:cid")
+
+
+def test_normalize_trade_hard_fail_missing_qty():
+    fetcher = types.SimpleNamespace(_symbol_resolver=lambda value: value)
+    trade = {"id": "1", "timestamp": 1000, "symbol": "BTCUSDT", "side": "buy", "price": 100.0}
+    try:
+        binance_utils.normalize_trade(fetcher, trade)
+        assert False, "Expected ValueError for missing qty"
+    except ValueError as e:
+        assert "missing required qty" in str(e)
+        assert "Binance" in str(e)
+
+
+def test_normalize_trade_hard_fail_missing_price():
+    fetcher = types.SimpleNamespace(_symbol_resolver=lambda value: value)
+    trade = {"id": "1", "timestamp": 1000, "symbol": "BTCUSDT", "side": "buy", "amount": 1.0}
+    try:
+        binance_utils.normalize_trade(fetcher, trade)
+        assert False, "Expected ValueError for missing price"
+    except ValueError as e:
+        assert "missing required price" in str(e)
+        assert "Binance" in str(e)
+
+
+def test_normalize_trade_valid_path_unchanged():
+    fetcher = types.SimpleNamespace(
+        _symbol_resolver=lambda value: {"BTCUSDT": "BTC/USDT:USDT"}.get(value, value)
+    )
+    trade = binance_utils.normalize_trade(
+        fetcher,
+        {"id": "1", "timestamp": 1000, "symbol": "BTCUSDT", "side": "buy", "amount": 1.0, "price": 100.0, "info": {}},
+    )
+    assert trade["id"] == "1"
+    assert trade["qty"] == 1.0
+    assert trade["price"] == 100.0
+    assert trade["symbol"] == "BTC/USDT:USDT"

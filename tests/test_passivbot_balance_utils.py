@@ -6,19 +6,32 @@ import pytest
 balance_utils = import_module("passivbot_balance_utils")
 
 
-def test_get_hysteresis_snapped_balance_returns_zero_default():
+def test_get_hysteresis_snapped_balance_raises_for_missing_balance():
     bot = types.SimpleNamespace()
 
-    assert balance_utils.get_hysteresis_snapped_balance(bot) == 0.0
+    with pytest.raises(AttributeError, match="balance"):
+        balance_utils.get_hysteresis_snapped_balance(bot)
 
 
-def test_get_raw_balance_prefers_balance_raw_and_falls_back_to_snapped():
+def test_get_raw_balance_prefers_valid_balance_raw():
     bot = types.SimpleNamespace(balance=10.0, balance_raw=25.0)
+
     assert balance_utils.get_raw_balance(bot) == 25.0
 
+
+def test_get_raw_balance_falls_back_to_snapped_when_balance_raw_missing():
     bot2 = types.SimpleNamespace(balance=11.0)
     bot2.get_hysteresis_snapped_balance = lambda: balance_utils.get_hysteresis_snapped_balance(bot2)
+
     assert balance_utils.get_raw_balance(bot2) == 11.0
+
+
+@pytest.mark.parametrize("value", [None, "", float("nan"), float("inf"), float("-inf")])
+def test_get_raw_balance_raises_for_invalid_balance_raw(value):
+    bot = types.SimpleNamespace(balance=10.0, balance_raw=value)
+
+    with pytest.raises((TypeError, ValueError), match="balance_raw"):
+        balance_utils.get_raw_balance(bot)
 
 
 def test_calc_effective_min_cost_at_price_uses_qty_step_when_min_qty_missing(monkeypatch):
@@ -101,7 +114,7 @@ async def test_calc_upnl_sum_aggregates_positions():
 
 
 @pytest.mark.asyncio
-async def test_calc_upnl_sum_returns_zero_on_error():
+async def test_calc_upnl_sum_returns_zero_on_error_and_logs_exception(caplog):
     bot = types.SimpleNamespace(
         fetched_positions=[{"symbol": "BTC/USDT:USDT", "position_side": "long", "price": 100.0, "size": 1.0}],
         cm=types.SimpleNamespace(get_last_prices=lambda symbols, max_age_ms=60_000: _async_value({})),
@@ -110,9 +123,13 @@ async def test_calc_upnl_sum_returns_zero_on_error():
         c_mults={"BTC/USDT:USDT": 1.0},
     )
 
-    result = await balance_utils.calc_upnl_sum(bot)
+    with caplog.at_level("ERROR"):
+        result = await balance_utils.calc_upnl_sum(bot)
 
     assert result == 0.0
+    assert len(caplog.records) == 1
+    assert caplog.records[0].exc_info is not None
+    assert "[balance] calc_upnl_sum failed symbol=BTC/USDT:USDT" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 import logging
 import time
-import traceback
 from importlib import import_module
 
 
@@ -11,15 +10,28 @@ def _get_pbr():
     return import_module("passivbot_rust")
 
 
+def _get_valid_balance_attr(self, attr_name: str) -> float:
+    if not hasattr(self, attr_name):
+        raise AttributeError(f"missing required {attr_name}")
+    value = getattr(self, attr_name)
+    try:
+        value = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid {attr_name}: {value!r}") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"invalid {attr_name}: {value!r}")
+    return value
+
+
 def get_hysteresis_snapped_balance(self) -> float:
     """Return hysteresis-snapped balance used for sizing."""
-    return float(getattr(self, "balance", 0.0) or 0.0)
+    return _get_valid_balance_attr(self, "balance")
 
 
 def get_raw_balance(self) -> float:
     """Return raw wallet balance (fallback to snapped for legacy test stubs)."""
     if hasattr(self, "balance_raw"):
-        return float(getattr(self, "balance_raw", 0.0) or 0.0)
+        return _get_valid_balance_attr(self, "balance_raw")
     return self.get_hysteresis_snapped_balance()
 
 
@@ -87,9 +99,8 @@ async def handle_balance_update(self, source="REST"):
                     "source": str(source),
                 },
             )
-        except Exception as e:
-            logging.error(f"error with handle_balance_update {e}")
-            traceback.print_exc()
+        except Exception:
+            logging.exception("[balance] handle_balance_update failed source=%s", source)
         finally:
             self._previous_balance_raw = balance_raw
             self._previous_balance_snapped = balance_snapped
@@ -114,9 +125,10 @@ async def calc_upnl_sum(self):
             )
             if upnl:
                 upnl_sum += upnl
-        except Exception as e:
-            logging.error(f"error calculating upnl sum {e}")
-            traceback.print_exc()
+        except Exception:
+            logging.exception(
+                "[balance] calc_upnl_sum failed symbol=%s", elm.get("symbol", "<unknown>")
+            )
             return 0.0
     return upnl_sum
 
@@ -135,6 +147,5 @@ async def update_effective_min_cost(self, symbol=None):
             self.effective_min_cost[symbol] = self._calc_effective_min_cost_at_price(
                 symbol, float(last_prices[symbol])
             )
-        except Exception as e:
-            logging.error(f"error with update_effective_min_cost for {symbol}: {e}")
-            traceback.print_exc()
+        except Exception:
+            logging.exception("[balance] update_effective_min_cost failed symbol=%s", symbol)

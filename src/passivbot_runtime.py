@@ -8,7 +8,7 @@ import signal
 def signal_handler(sig, frame):
     """Handle SIGINT by signalling the running bot to stop gracefully."""
     del sig, frame
-    print("\nReceived shutdown signal. Stopping bot...")
+    logging.info("Received shutdown signal. Stopping bot...")
     bot = globals().get("bot")
     try:
         loop = asyncio.get_event_loop()
@@ -33,14 +33,14 @@ def register_signal_handlers():
 
 async def shutdown_bot(bot):
     """Stop background tasks and close the exchange clients gracefully."""
-    print("Shutting down bot...")
+    logging.info("Shutting down bot...")
     bot.stop_data_maintainers()
     try:
         await asyncio.wait_for(bot.close(), timeout=3.0)
     except asyncio.TimeoutError:
-        print("Shutdown timed out after 3 seconds. Forcing exit.")
+        logging.warning("Shutdown timed out after 3 seconds. Forcing exit.")
     except Exception as e:
-        print(f"Error during shutdown: {e}")
+        logging.exception("Error during shutdown: %s", e)
 
 
 async def close_bot_clients(bot) -> None:
@@ -51,5 +51,5 @@ async def close_bot_clients(bot) -> None:
             await bot.ccp.close()
         if bot.cca is not None:
             await bot.cca.close()
-    except Exception as exc:
-        logging.error("error while closing bot clients during restart loop: %s", exc, exc_info=True)
+    except Exception:
+        logging.exception("error while closing bot clients during restart loop")

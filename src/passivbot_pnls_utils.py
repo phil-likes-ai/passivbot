@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import traceback
 from pathlib import Path
 
 from fill_events_manager import FillEventsManager, _build_fetcher_for_bot, _extract_symbol_pool
@@ -54,7 +53,6 @@ async def init_pnls(self):
         logging.info("[fills] initialized: %d cached events loaded", cached_count)
         self._pnls_initialized = True
 
-    except Exception as e:
-        logging.error("Failed to initialize FillEventsManager: %s", e)
-        traceback.print_exc()
+    except Exception:
+        logging.exception("Failed to initialize FillEventsManager")
         raise

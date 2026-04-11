@@ -52,6 +52,7 @@ def test_log_ema_gating_throttles_and_logs_debug_on_calc_error(monkeypatch, capl
     )
 
     assert "failed EMA gating log" in caplog.text
+    assert any(record.exc_info for record in caplog.records)
 
 
 def test_maybe_log_ema_debug_is_disabled_by_default(monkeypatch):
@@ -67,3 +68,23 @@ def test_maybe_log_ema_debug_is_disabled_by_default(monkeypatch):
     )
 
     assert calls == []
+
+
+def test_maybe_log_ema_debug_logs_span_lookup_failures_with_exc_info(monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(pb_logging_utils, "EMA_DEBUG_LOGGING_ENABLED", True)
+    monkeypatch.setattr(pb_logging_utils, "utc_ms", lambda: 30_001)
+    bot = types.SimpleNamespace(
+        bp=lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("bad bp")),
+        _last_ema_debug_log_ms=-100_000,
+    )
+
+    pb_logging_utils.maybe_log_ema_debug(
+        bot,
+        ema_bounds_long={"BTC/USDT:USDT": (1.0, 2.0)},
+        ema_bounds_short={},
+        entry_volatility_logrange_ema_1h={},
+    )
+
+    assert any(record.exc_info for record in caplog.records)
+    assert "EMA debug | long -> BTC/USDT:USDT spans=(?, ?) lower=1 upper=2" in caplog.text

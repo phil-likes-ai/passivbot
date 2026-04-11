@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import logging
-import traceback
-
-from procedures import print_async_exception
 
 
 def _build_order_params(self, order: dict) -> dict:
@@ -16,9 +13,11 @@ def _build_order_params(self, order: dict) -> dict:
 
 async def execute_order(self, order: dict) -> dict:
     """Place a single order via the exchange client."""
+    if "type" not in order:
+        raise KeyError(f"missing required order field 'type' for {order.get('symbol', '?')}")
     params = {
         "symbol": order["symbol"],
-        "type": order.get("type", "limit"),
+        "type": order["type"],
         "side": order["side"],
         "amount": abs(order["qty"]),
         "price": order["price"],
@@ -59,9 +58,11 @@ async def execute_cancellation(self, order: dict) -> dict:
                 order.get("id", "?")[:12],
             )
         else:
-            logging.error(f"error cancelling order {order} {e}")
-            print_async_exception(executed)
-            traceback.print_exc()
+            logging.exception(
+                "[order] cancel failed: %s %s",
+                order.get("symbol", "?"),
+                order.get("id", "?")[:12],
+            )
         return {}
 
 

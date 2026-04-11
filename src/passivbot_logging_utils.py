@@ -5,6 +5,9 @@ import logging
 from utils import utc_ms
 
 
+EMA_DEBUG_LOGGING_ENABLED = False
+
+
 def log_ema_gating(
     self,
     ideal_orders: dict,
@@ -91,8 +94,8 @@ def log_ema_gating(
                         ema_entry_price,
                         dist_pct,
                     )
-            except Exception as e:
-                logging.debug("failed EMA gating log for %s %s: %s", symbol, pside, e)
+            except Exception:
+                logging.debug("failed EMA gating log for %s %s", symbol, pside, exc_info=True)
 
 
 def maybe_log_ema_debug(
@@ -102,8 +105,7 @@ def maybe_log_ema_debug(
     entry_volatility_logrange_ema_1h: dict,
 ) -> None:
     """Emit a throttled log of EMA inputs so toggling visibility stays simple."""
-    ema_debug_logging_enabled = False
-    if not ema_debug_logging_enabled:
+    if not EMA_DEBUG_LOGGING_ENABLED:
         return
     self._ema_debug_log_interval_ms = 30_000
     self._last_ema_debug_log_ms = 0
@@ -115,9 +117,16 @@ def maybe_log_ema_debug(
     def _safe_span(pside: str, key: str, symbol: str):
         try:
             val = self.bp(pside, key, symbol)
-            return int(val) if val is not None else None
+            return (int(val) if val is not None else None), False
         except Exception:
-            return None
+            logging.debug(
+                "failed EMA debug span lookup for %s %s %s",
+                symbol,
+                pside,
+                key,
+                exc_info=True,
+            )
+            return None, True
 
     logs: list[str] = []
     for pside, bounds in (("long", ema_bounds_long), ("short", ema_bounds_short)):
@@ -125,11 +134,11 @@ def maybe_log_ema_debug(
             continue
         side_entries: list[str] = []
         for symbol, (lower, upper) in sorted(bounds.items()):
-            span0 = _safe_span(pside, "ema_span_0", symbol)
-            span1 = _safe_span(pside, "ema_span_1", symbol)
+            span0, span0_failed = _safe_span(pside, "ema_span_0", symbol)
+            span1, span1_failed = _safe_span(pside, "ema_span_1", symbol)
             grid_lr = (entry_volatility_logrange_ema_1h or {}).get(pside, {}).get(symbol)
             parts = [f"{symbol}"]
-            if span0 is not None or span1 is not None:
+            if span0 is not None or span1 is not None or span0_failed or span1_failed:
                 parts.append(
                     f"spans=({span0 if span0 is not None else '?'}"
                     f", {span1 if span1 is not None else '?'})"

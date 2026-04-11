@@ -18,15 +18,30 @@ def determine_position_side(side: str, closed_size: float) -> str:
     return "long"
 
 
+def _get_required_float(trade: dict, info: dict, trade_key: str, info_key: str) -> float:
+    trade_value = trade.get(trade_key)
+    if trade_value not in (None, ""):
+        return float(trade_value)
+
+    info_value = info.get(info_key)
+    if info_value not in (None, ""):
+        return float(info_value)
+
+    raise ValueError(
+        f"Bybit trade missing required {trade_key}: trade.{trade_key} and info.{info_key} are both empty "
+        f"for trade_id={trade.get('id') or info.get('execId') or info.get('orderId') or trade.get('order')}"
+    )
+
+
 def normalize_trade(trade: dict) -> dict:
     info = trade.get("info", {})
     info = info if isinstance(info, dict) else {}
     order_id = str(info.get("orderId", trade.get("order")))
     trade_id = str(trade.get("id") or info.get("execId") or order_id)
     timestamp = int(trade.get("timestamp") or info.get("execTime", 0))
-    qty = float(trade.get("amount") or info.get("execQty", 0.0))
+    qty = _get_required_float(trade, info, "amount", "execQty")
     side = str(trade.get("side") or info.get("side", "")).lower()
-    price = float(trade.get("price") or info.get("execPrice", 0.0))
+    price = _get_required_float(trade, info, "price", "execPrice")
     closed_size = float(info.get("closedSize") or info.get("closeSize") or 0.0)
     position_side = determine_position_side(side, closed_size)
     pnl = float(trade.get("pnl") or 0.0)

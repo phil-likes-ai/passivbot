@@ -36,14 +36,13 @@ def test_get_forced_pb_mode_uses_configured_mode():
     assert pb_mode_utils.get_forced_PB_mode(bot, "long", "BTC/USDT:USDT") == "manual"
 
 
-def test_get_current_n_positions_counts_nonzero_positions():
+def test_get_current_n_positions_counts_nonzero_positions_without_forced_mode_stub():
     bot = types.SimpleNamespace(
         positions={
             "BTC/USDT:USDT": {"long": {"size": 1.0}},
             "ETH/USDT:USDT": {"long": {"size": 0.0}},
             "SOL/USDT:USDT": {"long": {"size": 2.0}},
         },
-        get_forced_PB_mode=lambda pside, symbol=None: None,
     )
 
     assert pb_mode_utils.get_current_n_positions(bot, "long") == 2
@@ -117,3 +116,46 @@ def test_build_live_symbol_universe_merges_runtime_and_approved_symbols():
     result = pb_mode_utils.build_live_symbol_universe(bot)
 
     assert result == ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT"]
+
+
+def test_forager_refresh_budget_uses_token_bucket_state(monkeypatch):
+    bot = types.SimpleNamespace()
+    ticks = iter([60_000, 90_000])
+    monkeypatch.setattr(pb_mode_utils, "utc_ms", lambda: next(ticks))
+
+    first = pb_mode_utils._forager_refresh_budget(bot, 4)
+    second = pb_mode_utils._forager_refresh_budget(bot, 4)
+
+    assert first == 4
+    assert second == 2
+    assert bot._forager_refresh_state["last_ms"] == 90_000
+
+
+def test_split_forager_budget_by_side_round_robins_remainder():
+    bot = types.SimpleNamespace(_forager_budget_rr=0)
+
+    first = pb_mode_utils._split_forager_budget_by_side(bot, 3, ["long", "short"])
+    second = pb_mode_utils._split_forager_budget_by_side(bot, 3, ["long", "short"])
+
+    assert first == {"long": 2, "short": 1}
+    assert second == {"long": 1, "short": 2}
+
+
+def test_forager_target_staleness_falls_back_to_ttl_for_invalid_values():
+    bot = types.SimpleNamespace(inactive_coin_candle_ttl_ms=123_000)
+    assert pb_mode_utils._forager_target_staleness_ms(bot, "bad", 0) == 123_000
+
+
+def test_maybe_log_candle_refresh_logs_debug_with_exc_info_on_failure():
+    bot = types.SimpleNamespace(candle_refresh_log_boot_delay_ms=0, start_time_ms=0)
+    calls = []
+    old_debug = pb_mode_utils.logging.debug
+    try:
+        pb_mode_utils.logging.debug = lambda *args, **kwargs: calls.append((args, kwargs))
+        pb_mode_utils._maybe_log_candle_refresh(bot, "forager", None)
+    finally:
+        pb_mode_utils.logging.debug = old_debug
+
+    assert calls
+    assert calls[-1][0][0] == "[candle] failed to emit candle refresh summary"
+    assert calls[-1][1].get("exc_info") is True

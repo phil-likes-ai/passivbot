@@ -16,14 +16,13 @@ def test_log_once_logs_only_first_time(monkeypatch):
     assert calls == ["hello"]
 
 
-def test_debug_print_only_prints_in_debug_mode(monkeypatch):
-    calls = []
-    monkeypatch.setattr("builtins.print", lambda *args: calls.append(args))
-
+def test_debug_print_only_logs_in_debug_mode(caplog):
     bot = types.SimpleNamespace(debug_mode=False)
-    pb_debug_utils.debug_print(bot, "x")
-    assert calls == []
+    with caplog.at_level("DEBUG"):
+        pb_debug_utils.debug_print(bot, "x")
+    assert [record.message for record in caplog.records] == []
 
     bot.debug_mode = True
-    pb_debug_utils.debug_print(bot, "x", 1)
-    assert calls == [("x", 1)]
+    with caplog.at_level("DEBUG"):
+        pb_debug_utils.debug_print(bot, "x", 1)
+    assert [record.message for record in caplog.records] == ["x 1"]

@@ -31,6 +31,13 @@ def maybe_log_silence_watchdog(self, *, now_monotonic=None) -> bool:
             else:
                 raise TypeError(tracked_value)
         except Exception:
+            logging.debug(
+                "[health] silence watchdog using now_monotonic fallback for last log activity | phase=%s | stage=%s | now_monotonic=%.3f",
+                str(getattr(self, "_log_silence_watchdog_phase", "runtime") or "runtime"),
+                str(getattr(self, "_log_silence_watchdog_stage", "unknown") or "unknown"),
+                now_monotonic,
+                exc_info=True,
+            )
             last_log_monotonic = now_monotonic
     else:
         last_log_monotonic = now_monotonic
@@ -97,6 +104,12 @@ def get_fetch_delay_seconds(self) -> float:
             raise TypeError(fetch_delay_ms)
         fetch_delay_ms = float(fetch_value) if fetch_value is not None else None
     except Exception:
+        logging.debug(
+            "[health] invalid warmup_fetch_delay_ms config; using exchange default | exchange=%s | value=%r",
+            getattr(self, "exchange", None),
+            fetch_delay_ms,
+            exc_info=True,
+        )
         fetch_delay_ms = None
     if fetch_delay_ms is None:
         exchange_lower = self.exchange.lower() if self.exchange else ""
@@ -112,16 +125,16 @@ def stop_data_maintainers(self, verbose=True):
     for key in self.maintainers:
         try:
             res[key] = self.maintainers[key].cancel()
-        except Exception as e:
-            logging.error(f"error stopping maintainer {key} {e}")
+        except Exception:
+            logging.exception("[ws] error stopping data maintainer task_key=%s", key)
     if hasattr(self, "WS_ohlcvs_1m_tasks"):
         res0s = {}
         for key in self.WS_ohlcvs_1m_tasks:
             try:
                 res0 = self.WS_ohlcvs_1m_tasks[key].cancel()
                 res0s[key] = res0
-            except Exception as e:
-                logging.error(f"error stopping WS_ohlcvs_1m_tasks {key} {e}")
+            except Exception:
+                logging.exception("[ws] error stopping WS_ohlcvs_1m_tasks task_key=%s", key)
         if res0s and verbose:
             logging.info(f"stopped ohlcvs watcher tasks {res0s}")
     if verbose:
@@ -188,6 +201,7 @@ def log_health_summary(self) -> None:
         rss_mb = getrusage(rusage_self).ru_maxrss / 1024 / 1024
         mem_str = f"rss={rss_mb:.0f}MB"
     except Exception:
+        logging.debug("[health] unable to collect process RSS; omitting memory summary suffix", exc_info=True)
         mem_str = ""
 
     logging.info(
@@ -252,6 +266,12 @@ def log_memory_snapshot(self, *, now_ms=None, get_process_rss_bytes=None) -> Non
                 try:
                     tf_label = key[0] if isinstance(key, tuple) and key else str(key)
                 except Exception:
+                    logging.debug(
+                        "[health] tf cache key label extraction failed during memory snapshot; using unknown | symbol=%s | key_type=%s",
+                        sym,
+                        type(key).__name__,
+                        exc_info=True,
+                    )
                     tf_label = "unknown"
                 arr = val[0] if isinstance(val, tuple) and val else val
                 if not hasattr(arr, "nbytes"):
@@ -269,6 +289,10 @@ def log_memory_snapshot(self, *, now_ms=None, get_process_rss_bytes=None) -> Non
                 for (sym, tf), bytes_, rows in top_tf
             )
     except Exception:
+        logging.debug(
+            "[health] cache inspection unavailable during memory snapshot; omitting cache summary",
+            exc_info=True,
+        )
         cache_bytes = None
     prev = getattr(self, "_mem_log_prev", None)
     pct_change = None
@@ -311,6 +335,10 @@ def log_memory_snapshot(self, *, now_ms=None, get_process_rss_bytes=None) -> Non
                     coro_obj = coro()
                     name = getattr(coro_obj, "__qualname__", None)
                 except Exception:
+                    logging.debug(
+                        "[health] task coro inspection failed during memory snapshot; falling back to task name",
+                        exc_info=True,
+                    )
                     name = None
             if not name:
                 name = getattr(t, "get_name", lambda: None)()
@@ -325,7 +353,10 @@ def log_memory_snapshot(self, *, now_ms=None, get_process_rss_bytes=None) -> Non
         if top_tasks:
             parts.append(f"task_top={top_tasks}")
     except Exception:
-        pass
+        logging.debug(
+            "[health] task inspection unavailable during memory snapshot; omitting task summary",
+            exc_info=True,
+        )
     logging.info("; ".join(parts))
     self._mem_log_prev = {"timestamp": now_ms, "rss": rss}
     if cache_bytes is not None:

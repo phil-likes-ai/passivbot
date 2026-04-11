@@ -18,6 +18,20 @@ def _as_float(value: object) -> float:
     return 0.0
 
 
+def _get_required_float(trade: dict, info: dict, *keys: str) -> float:
+    for key in keys:
+        value = trade.get(key)
+        if value not in (None, ""):
+            return float(value)
+        value = info.get(key)
+        if value not in (None, ""):
+            return float(value)
+    raise ValueError(
+        f"KuCoin trade missing required qty/price: trade keys {keys} and info keys {keys} are all empty "
+        f"for trade_id={trade.get('id') or info.get('tradeId') or info.get('id')}"
+    )
+
+
 def _as_int(value: object) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -131,8 +145,8 @@ def normalize_trade(trade: Dict[str, object]) -> Dict[str, object]:
         "datetime": ts_to_date(timestamp) if timestamp else "",
         "symbol": str(trade.get("symbol") or ""),
         "side": side,
-        "qty": abs(_as_float(trade.get("amount") or info.get("size") or info.get("amount"))),
-        "price": _as_float(trade.get("price") or info.get("price")),
+        "qty": abs(_get_required_float(trade, info, "amount", "size")),
+        "price": _get_required_float(trade, info, "price"),
         "pnl": 0.0,
         "fees": trade.get("fee"),
         "pb_order_type": "",

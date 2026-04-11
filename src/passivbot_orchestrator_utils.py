@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Callable
-
+import math
 import re
+from typing import Callable
 
 
 def build_ema_pairs(ema_map: dict) -> list[list[float]]:
@@ -90,6 +90,18 @@ def build_symbol_input(
         "long": side_input_fn("long"),
         "short": side_input_fn("short"),
     }
+
+
+def get_required_market_fee(*, markets_dict: dict, symbol: str, fee_side: str) -> float:
+    market = markets_dict.get(symbol)
+    if market is None:
+        raise KeyError(f"missing market metadata for {symbol} while building orchestrator input")
+    if fee_side not in market:
+        raise KeyError(f"missing required {fee_side}_fee for {symbol}")
+    fee = float(market[fee_side])
+    if not math.isfinite(fee):
+        raise ValueError(f"invalid {fee_side}_fee for {symbol}: {market[fee_side]}")
+    return fee
 
 
 def build_orchestrator_input_base(

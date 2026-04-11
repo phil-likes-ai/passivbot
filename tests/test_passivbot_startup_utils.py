@@ -43,6 +43,39 @@ def test_log_startup_banner_includes_mode_positions_and_twel(caplog, monkeypatch
     assert "TWEL: L:50% S:25%" in text
 
 
+def test_log_startup_banner_raises_for_missing_total_wallet_exposure_limit():
+    values = {
+        ("long", "total_wallet_exposure_limit"): 0.5,
+        ("long", "n_positions"): 3,
+        ("short", "n_positions"): 1,
+    }
+    bot = types.SimpleNamespace(
+        user="alice",
+        exchange="bybit",
+        bot_value=lambda pside, key: values[(pside, key)],
+    )
+
+    with pytest.raises(ValueError, match="short total_wallet_exposure_limit"):
+        pb_startup_utils.log_startup_banner(bot)
+
+
+def test_log_startup_banner_raises_for_invalid_total_wallet_exposure_limit():
+    values = {
+        ("long", "total_wallet_exposure_limit"): "invalid",
+        ("short", "total_wallet_exposure_limit"): 0.25,
+        ("long", "n_positions"): 3,
+        ("short", "n_positions"): 1,
+    }
+    bot = types.SimpleNamespace(
+        user="alice",
+        exchange="bybit",
+        bot_value=lambda pside, key: values[(pside, key)],
+    )
+
+    with pytest.raises(ValueError, match="long total_wallet_exposure_limit"):
+        pb_startup_utils.log_startup_banner(bot)
+
+
 @pytest.mark.asyncio
 async def test_maybe_apply_boot_stagger_uses_configured_value(monkeypatch):
     sleep_calls = []
@@ -73,6 +106,29 @@ async def test_maybe_apply_boot_stagger_defaults_for_hyperliquid(monkeypatch):
     await pb_startup_utils.maybe_apply_boot_stagger(bot)
 
     assert sleep_calls == [2.0]
+
+
+@pytest.mark.asyncio
+async def test_maybe_apply_boot_stagger_logs_exc_info_and_skips_sleep_for_invalid_value(caplog, monkeypatch):
+    sleep_calls = []
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(pb_startup_utils.asyncio, "sleep", fake_sleep)
+    caplog.set_level(logging.DEBUG)
+    bot = types.SimpleNamespace(config={"live": {"boot_stagger_seconds": {"bad": "value"}}}, exchange="binance")
+
+    await pb_startup_utils.maybe_apply_boot_stagger(bot)
+
+    assert sleep_calls == []
+    matching_records = [
+        record
+        for record in caplog.records
+        if "invalid boot_stagger_seconds config; defaulting to 0.0" in record.getMessage()
+    ]
+    assert matching_records
+    assert matching_records[0].exc_info is not None
 
 
 @pytest.mark.asyncio
@@ -160,6 +216,46 @@ async def test_run_startup_preloop_runs_stages_and_returns_true(monkeypatch):
         "start_data_maintainers",
     ]
     assert flushes == [(True, 111)]
+
+
+@pytest.mark.asyncio
+async def test_run_startup_preloop_continues_after_warmup_failure_with_exc_info(caplog, monkeypatch):
+    monkeypatch.setattr(pb_startup_utils.asyncio, "sleep", lambda seconds: _async_capture([], seconds))
+    monkeypatch.setattr(pb_startup_utils, "format_approved_ignored_coins", lambda config, exchange, quote=None: _async_capture([], (exchange, quote)))
+    monkeypatch.setattr(pb_startup_utils, "utc_ms", lambda: 333)
+    caplog.set_level(logging.INFO)
+    stages = []
+    flushes = []
+    later_stage_calls = []
+
+    async def fail_warmup():
+        raise RuntimeError("warmup boom")
+
+    bot = types.SimpleNamespace(
+        config={},
+        user_info={"exchange": "bybit"},
+        quote="USDT",
+        init_markets=lambda: _async_capture([], "init"),
+        _monitor_flush_snapshot=lambda force=False, ts=None: _async_capture(flushes, (force, ts)),
+        warmup_candles_staggered=fail_warmup,
+        _equity_hard_stop_enabled=lambda: False,
+        _log_memory_snapshot=lambda: later_stage_calls.append("memory"),
+        start_data_maintainers=lambda: _async_capture(later_stage_calls, "maintainers"),
+    )
+
+    result = await pb_startup_utils.run_startup_preloop(bot, stages.append)
+
+    assert result is True
+    assert stages == [
+        "format_approved_ignored_coins",
+        "init_markets",
+        "warmup_candles_staggered",
+        "post_init_sleep",
+        "start_data_maintainers",
+    ]
+    assert flushes == [(True, 333)]
+    assert later_stage_calls == ["memory", "maintainers"]
+    assert any(record.exc_info for record in caplog.records)
 
 
 @pytest.mark.asyncio

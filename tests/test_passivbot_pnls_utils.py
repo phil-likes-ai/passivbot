@@ -78,3 +78,34 @@ async def test_init_pnls_respects_non_bybit_doctor_mode(monkeypatch):
     await pb_pnls_utils.init_pnls(bot)
 
     assert reports == [True]
+
+
+@pytest.mark.asyncio
+async def test_init_pnls_logs_exception_with_exc_info_and_reraises(monkeypatch, caplog):
+    expected_error = RuntimeError("load failed")
+
+    class FakeManager:
+        def __init__(self, **kwargs):
+            self._events = []
+
+        async def ensure_loaded(self):
+            raise expected_error
+
+    monkeypatch.setattr(pb_pnls_utils, "FillEventsManager", FakeManager)
+    monkeypatch.setattr(pb_pnls_utils, "_extract_symbol_pool", lambda config, runtime: set())
+    monkeypatch.setattr(pb_pnls_utils, "_build_fetcher_for_bot", lambda bot, pool: object())
+
+    bot = types.SimpleNamespace(
+        _pnls_initialized=False,
+        config={},
+        exchange="binance",
+        user="alice",
+    )
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(RuntimeError, match="load failed"):
+            await pb_pnls_utils.init_pnls(bot)
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].message == "Failed to initialize FillEventsManager"
+    assert caplog.records[0].exc_info is not None

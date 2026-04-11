@@ -24,6 +24,9 @@ def normalize_raw_trade(raw: Dict[str, object]) -> Dict[str, object]:
     side = "buy" if size >= 0 else "sell"
     fee_cost = float(raw.get("fee") or 0)
     fee = {"cost": fee_cost, "currency": "USDT"} if fee_cost else None
+    price_raw = raw.get("price")
+    if price_raw is None:
+        raise ValueError("Gate.io fill missing required 'price' field in my_trades_timerange response")
     return {
         "id": str(raw.get("trade_id") or raw.get("id") or ""),
         "order": str(raw.get("order_id") or ""),
@@ -31,7 +34,7 @@ def normalize_raw_trade(raw: Dict[str, object]) -> Dict[str, object]:
         "symbol": symbol,
         "side": side,
         "amount": abs(size),
-        "price": float(raw.get("price") or 0),
+        "price": float(price_raw),
         "fee": fee,
         "info": raw,
     }
@@ -86,8 +89,16 @@ def normalize_trade(fetcher, trade: Dict[str, object], order: Dict[str, object],
 
     symbol = str(trade.get("symbol") or info.get("contract") or "")
     side = str(trade.get("side") or info.get("side") or "").lower()
-    qty = abs(float(trade.get("amount") or info.get("size") or 0.0))
-    price = float(trade.get("price") or info.get("price") or 0.0)
+    
+    qty_source = trade.get("amount") or info.get("size")
+    if qty_source is None:
+        raise ValueError("Gate.io fill missing required 'qty' field: expected 'amount' in trade or 'size' in info")
+    qty = abs(float(qty_source))
+    
+    price_source = trade.get("price") or info.get("price")
+    if price_source is None:
+        raise ValueError("Gate.io fill missing required 'price' field: expected 'price' in trade or info")
+    price = float(price_source)
     fee = trade.get("fee")
 
     proportion = qty / total_qty if total_qty > 0 else 0

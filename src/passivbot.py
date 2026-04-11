@@ -4207,8 +4207,16 @@ class Passivbot:
                     min_qty=self.min_qtys[symbol],
                     min_cost=self.min_costs[symbol],
                     c_mult=self.c_mults[symbol],
-                    maker_fee=self.markets_dict.get(symbol, {}).get("maker", 0.0) or 0.0,
-                    taker_fee=self.markets_dict.get(symbol, {}).get("taker", 0.0) or 0.0,
+                    maker_fee=pb_orchestrator_utils.get_required_market_fee(
+                        markets_dict=self.markets_dict,
+                        symbol=symbol,
+                        fee_side="maker",
+                    ),
+                    taker_fee=pb_orchestrator_utils.get_required_market_fee(
+                        markets_dict=self.markets_dict,
+                        symbol=symbol,
+                        fee_side="taker",
+                    ),
                     effective_min_cost=effective_min_cost,
                     m1_close_emas=m1_close_emas[symbol],
                     m1_volume_emas=m1_volume_emas[symbol],
@@ -5381,116 +5389,6 @@ class Passivbot:
             await self.ccp.close()
         raise RestartBotException("Bot will restart.")
 
-    def _forager_refresh_budget(self, max_calls_per_minute: int) -> int:
-        """Token bucket budget for forager candle refreshes."""
-        try:
-            max_calls = int(max_calls_per_minute)
-        except Exception:
-            max_calls = 0
-        if max_calls <= 0:
-            return 0
-        now = utc_ms()
-        state = getattr(self, "_forager_refresh_state", None)
-        if not isinstance(state, dict):
-            state = {"tokens": float(max_calls), "last_ms": now}
-        last_ms = int(state.get("last_ms", now) or now)
-        tokens = float(state.get("tokens", max_calls))
-        elapsed = max(0.0, (now - last_ms) / 60_000.0)
-        tokens = min(float(max_calls), tokens + float(max_calls) * elapsed)
-        budget = int(tokens)
-        state["tokens"] = float(tokens - budget)
-        state["last_ms"] = int(now)
-        self._forager_refresh_state = state
-        return max(0, budget)
-
-    def _split_forager_budget_by_side(
-        self, total_budget: int, sides: Iterable[str]
-    ) -> Dict[str, int]:
-        """Split a cycle budget fairly across sides with round-robin remainder."""
-        side_list = [s for s in sides if s in ("long", "short")]
-        out = {s: 0 for s in side_list}
-        try:
-            total = int(total_budget)
-        except Exception:
-            total = 0
-        if total <= 0 or not side_list:
-            return out
-        n = len(side_list)
-        base = total // n
-        rem = total % n
-        for s in side_list:
-            out[s] = base
-        start = int(getattr(self, "_forager_budget_rr", 0) or 0) % n
-        for i in range(rem):
-            out[side_list[(start + i) % n]] += 1
-        self._forager_budget_rr = (start + 1) % n
-        return out
-
-    def _forager_target_staleness_ms(self, n_symbols: int, max_calls_per_minute: int) -> int:
-        """Compute max acceptable staleness for forager candidates based on refresh budget."""
-        try:
-            n_syms = int(n_symbols)
-        except Exception:
-            n_syms = 0
-        try:
-            max_calls = int(max_calls_per_minute)
-        except Exception:
-            max_calls = 0
-        if n_syms <= 0 or max_calls <= 0:
-            return int(getattr(self, "inactive_coin_candle_ttl_ms", 600_000))
-        minutes = max(1.0, float(n_syms) / float(max_calls))
-        return int(minutes * 60_000)
-
-    def _maybe_log_candle_refresh(
-        self,
-        context: str,
-        symbols: Iterable[str],
-        *,
-        target_age_ms: Optional[int] = None,
-        refreshed: Optional[int] = None,
-        throttle_ms: int = 60_000,
-    ) -> None:
-        """Log a throttled summary of candle staleness for the given symbols."""
-        try:
-            now = utc_ms()
-            boot_delay_ms = int(getattr(self, "candle_refresh_log_boot_delay_ms", 300_000) or 0)
-            boot_elapsed = int(now - getattr(self, "start_time_ms", now))
-            if boot_elapsed < boot_delay_ms:
-                return
-            last = int(getattr(self, "_candle_refresh_log_last_ms", 0) or 0)
-            if (now - last) < int(throttle_ms):
-                return
-            sym_list = list(symbols)
-            if not sym_list:
-                return
-            ages = []
-            for sym in sym_list:
-                try:
-                    last_final = self.cm.get_last_final_ts(sym)
-                except Exception:
-                    last_final = 0
-                if last_final:
-                    ages.append(max(0, now - int(last_final)))
-            if not ages:
-                return
-            ages.sort()
-            median_ms = ages[len(ages) // 2]
-            max_ms = ages[-1]
-            target_s = f"{int(target_age_ms/1000)}s" if target_age_ms else "n/a"
-            refreshed_str = f", refreshed={refreshed}" if refreshed is not None else ""
-            logging.debug(
-                "[candle] %s symbols=%d%s max_stale=%ds median_stale=%ds target=%s",
-                context,
-                len(sym_list),
-                refreshed_str,
-                int(max_ms / 1000),
-                int(median_ms / 1000),
-                target_s,
-            )
-            self._candle_refresh_log_last_ms = int(now)
-        except Exception:
-            return
-
     async def _refresh_forager_candidate_candles(self) -> None:
         """Best-effort refresh for forager candidate symbols to avoid large bursts."""
         if not self.is_forager_mode():
@@ -5593,7 +5491,10 @@ class Passivbot:
                     )
                     self._forager_refresh_log_last_ms = int(now)
         except Exception:
-            pass
+            logging.debug(
+                "[candle] failed to emit forager refresh diagnostics",
+                exc_info=True,
+            )
 
         end_ts = (now // ONE_MIN_MS) * ONE_MIN_MS - ONE_MIN_MS
         try:
@@ -6526,6 +6427,10 @@ Passivbot.maybe_log_ema_debug = pb_logging_utils.maybe_log_ema_debug
 Passivbot.get_max_n_positions = pb_mode_utils.get_max_n_positions
 Passivbot.get_forced_PB_mode = pb_mode_utils.get_forced_PB_mode
 Passivbot.is_forager_mode = pb_mode_utils.is_forager_mode
+Passivbot._forager_refresh_budget = pb_mode_utils._forager_refresh_budget
+Passivbot._split_forager_budget_by_side = pb_mode_utils._split_forager_budget_by_side
+Passivbot._forager_target_staleness_ms = pb_mode_utils._forager_target_staleness_ms
+Passivbot._maybe_log_candle_refresh = pb_mode_utils._maybe_log_candle_refresh
 Passivbot._pside_blocks_new_entries = pb_mode_utils.pside_blocks_new_entries
 Passivbot._mode_override_to_orchestrator_mode = pb_mode_utils.mode_override_to_orchestrator_mode
 Passivbot._python_mode_from_orchestrator_state = pb_mode_utils.python_mode_from_orchestrator_state
@@ -6595,4 +6500,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nBot shutdown complete.")
+        logging.info("Bot shutdown complete.")

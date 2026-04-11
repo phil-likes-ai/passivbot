@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bisect
 import inspect
+import logging
 import os
 import sys
 from importlib import import_module
@@ -28,7 +29,7 @@ def get_process_rss_bytes() -> Optional[int]:
         if psutil is not None:
             return int(psutil.Process(os.getpid()).memory_info().rss)
     except Exception:
-        pass
+        logging.debug("[health] get_process_rss_bytes psutil RSS lookup failed", exc_info=True)
     if resource is not None:
         try:
             getrusage = getattr(resource, "getrusage", None)
@@ -42,7 +43,7 @@ def get_process_rss_bytes() -> Optional[int]:
                 usage = int(usage)
             return int(usage)
         except Exception:
-            pass
+            logging.debug("[health] get_process_rss_bytes resource RSS lookup failed", exc_info=True)
     return None
 
 
@@ -92,6 +93,11 @@ def or_default(f, *args, default=None, **kwargs):
     try:
         return f(*args, **kwargs)
     except Exception:
+        logging.debug(
+            "[utils] or_default falling back to default for %s",
+            getattr(f, "__qualname__", getattr(f, "__name__", repr(f))),
+            exc_info=True,
+        )
         return default
 
 
