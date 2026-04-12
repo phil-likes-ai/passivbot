@@ -58,6 +58,14 @@ passivbot tool verify-hlcvs-data
 passivbot tool streamline-json configs/examples/default_trailing_grid_long_npos10.json
 ```
 
+## CI / Security Gates
+
+```bash
+python scripts/ci/check_secret_patterns.py --base origin/master --head HEAD
+python scripts/ci/check_error_contract_patterns.py --base origin/master --head HEAD
+python -m pip_audit -r requirements.txt --progress-spinner off
+```
+
 ## High-Signal Gotcha
 
 If Rust changes seem ignored by tests/runtime, rebuild extension again before debugging behavior.

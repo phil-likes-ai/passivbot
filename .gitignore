@@ -298,6 +298,10 @@ dmypy.json
 [Ll]ib64
 [Ll]ocal
 [Ss]cripts
+!/scripts/
+!/scripts/__init__.py
+!/scripts/ci/
+!/scripts/ci/*.py
 pyvenv.cfg
 pip-selfcheck.json
 
