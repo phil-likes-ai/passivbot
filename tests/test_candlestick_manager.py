@@ -4,6 +4,7 @@ import time
 import math
 import json
 import zlib
+from types import SimpleNamespace
 import pytest
 import numpy as np
 from pathlib import Path
@@ -984,3 +985,135 @@ async def test_force_refetch_gaps_clears_gaps(tmp_path):
 
     # Gap should be cleared
     assert len(cm._get_known_gaps(symbol)) == 0
+
+
+@pytest.mark.asyncio
+async def test_ccxt_fetch_ohlcv_once_raises_after_rate_limit_retries(tmp_path, monkeypatch):
+    ex = SimpleNamespace(id="hyperliquid", fetch_ohlcv=object())
+    cm = CandlestickManager(exchange=ex, exchange_name="hyperliquid", cache_dir=str(tmp_path / "caches"))
+    sleep_calls = []
+    global_backoffs = []
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    async def fake_fetch(**kwargs):
+        raise RuntimeError("429 too many")
+
+    async def fake_global_backoff(seconds):
+        global_backoffs.append(seconds)
+
+    monkeypatch.setattr("candlestick_manager.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("candlestick_manager_ccxt_utils.fetch_ohlcv_with_optional_semaphore", fake_fetch)
+    monkeypatch.setattr(
+        "candlestick_manager_ccxt_utils.adjusted_sleep_seconds",
+        lambda **kwargs: (1.5, 9.0),
+    )
+    monkeypatch.setattr(cm, "_set_global_rate_limit", fake_global_backoff)
+
+    with pytest.raises(RuntimeError, match="exhausted retries") as excinfo:
+        await cm._ccxt_fetch_ohlcv_once("BTC/USDT:USDT", 0, 100, tf="1m")
+
+    assert "symbol=BTC/USDT:USDT" in str(excinfo.value)
+    assert sleep_calls
+    assert global_backoffs
+
+
+@pytest.mark.asyncio
+async def test_fetch_ohlcv_paginated_raises_when_on_batch_fails(tmp_path, monkeypatch):
+    ex = SimpleNamespace(id="bybit")
+    cm = CandlestickManager(exchange=ex, exchange_name="bybit", cache_dir=str(tmp_path / "caches"))
+    pages = [
+        [[0, 1, 1, 1, 1, 1], [60_000, 2, 2, 2, 2, 2]],
+        [[120_000, 3, 3, 3, 3, 3]],
+    ]
+
+    async def fake_fetch(symbol, since, limit, end_exclusive_ms=None, tf=None):
+        return pages.pop(0)
+
+    monkeypatch.setattr(cm, "_ccxt_fetch_ohlcv_once", fake_fetch)
+
+    seen = []
+
+    def on_batch(arr):
+        seen.append(arr.copy())
+        raise RuntimeError("stop")
+
+    with pytest.raises(RuntimeError, match="batch callback failed") as excinfo:
+        await cm._fetch_ohlcv_paginated("BTC/USDT:USDT", 0, 180_000, timeframe="1m", on_batch=on_batch)
+
+    assert len(seen) == 1
+    assert "symbol=BTC/USDT:USDT" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_fetch_ohlcv_paginated_raises_when_non_empty_page_normalizes_empty(tmp_path, monkeypatch):
+    ex = SimpleNamespace(id="bybit")
+    cm = CandlestickManager(exchange=ex, exchange_name="bybit", cache_dir=str(tmp_path / "caches"))
+
+    async def fake_fetch(symbol, since, limit, end_exclusive_ms=None, tf=None):
+        return [["bad-row"]]
+
+    monkeypatch.setattr(cm, "_ccxt_fetch_ohlcv_once", fake_fetch)
+
+    with pytest.raises(RuntimeError, match="non-empty raw payload") as excinfo:
+        await cm._fetch_ohlcv_paginated("BTC/USDT:USDT", 0, 60_000, timeframe="1m")
+
+    assert "symbol=BTC/USDT:USDT" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_fetch_ohlcv_paginated_records_verified_gaps_from_payload_and_between_pages(tmp_path, monkeypatch):
+    ex = SimpleNamespace(id="bybit")
+    cm = CandlestickManager(exchange=ex, exchange_name="bybit", cache_dir=str(tmp_path / "caches"))
+    cm._record_payload_gaps_as_known = True
+    pages = [
+        [[0, 1, 1, 1, 1, 1], [180_000, 2, 2, 2, 2, 2]],
+        [[360_000, 3, 3, 3, 3, 3]],
+    ]
+    recorded = []
+
+    async def fake_fetch(symbol, since, limit, end_exclusive_ms=None, tf=None):
+        return pages.pop(0) if pages else []
+
+    monkeypatch.setattr(cm, "_ccxt_fetch_ohlcv_once", fake_fetch)
+    monkeypatch.setattr(
+        cm, "_record_verified_gap", lambda symbol, start, end: recorded.append((symbol, start, end))
+    )
+
+    result = await cm._fetch_ohlcv_paginated("BTC/USDT:USDT", 0, 420_000, timeframe="1m")
+
+    assert result["ts"].tolist() == [0, 180_000, 360_000]
+    assert recorded == [
+        ("BTC/USDT:USDT", 60_000, 120_000),
+        ("BTC/USDT:USDT", 240_000, 300_000),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_current_close_raises_when_all_sources_fail(tmp_path, monkeypatch):
+    class _Ex:
+        id = "okx"
+
+        async def fetch_ticker(self, symbol):
+            raise RuntimeError("ticker down")
+
+    fixed_now_ms = 1725590400000
+    monkeypatch.setattr("time.time", lambda: fixed_now_ms / 1000.0)
+
+    cm = CandlestickManager(exchange=_Ex(), exchange_name="okx", cache_dir=str(tmp_path / "caches"))
+    symbol = "BTC/USDT:USDT"
+
+    async def fake_get_candles(*args, **kwargs):
+        raise RuntimeError("candles unavailable")
+
+    async def fake_once(*args, **kwargs):
+        raise RuntimeError("tail unavailable")
+
+    monkeypatch.setattr(cm, "get_candles", fake_get_candles)
+    monkeypatch.setattr(cm, "_ccxt_fetch_ohlcv_once", fake_once)
+
+    with pytest.raises(RuntimeError, match="unable to resolve current close") as excinfo:
+        await cm.get_current_close(symbol, max_age_ms=60_000)
+
+    assert "symbol=BTC/USDT:USDT" in str(excinfo.value)

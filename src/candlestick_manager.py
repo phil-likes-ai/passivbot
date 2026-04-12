@@ -1987,6 +1987,9 @@ class CandlestickManager:
         is_bybit, is_hyperliquid, max_attempts, backoff, backoff_cap = (
             cm_ccxt_utils.exchange_retry_config(self._ex_id if isinstance(self._ex_id, str) else "")
         )
+        tf_norm = self._normalize_timeframe_arg(timeframe, tf, default=self._ccxt_timeframe)
+        last_error: Optional[BaseException] = None
+        last_error_ctx: Optional[Dict[str, Any]] = None
         for attempt in range(max_attempts):
             # Wait for global rate limit backoff if one is active
             await self._apply_rate_limit_backoff()
@@ -1995,7 +1998,6 @@ class CandlestickManager:
                     self._ex_id if isinstance(self._ex_id, str) else "", end_exclusive_ms
                 )
 
-                tf_norm = self._normalize_timeframe_arg(timeframe, tf, default=self._ccxt_timeframe)
                 t0 = time.monotonic()
                 self._emit_remote_fetch(
                     cm_ccxt_utils.remote_fetch_start_payload(
@@ -2085,6 +2087,8 @@ class CandlestickManager:
                     error=error_ctx["error"],
                     error_repr=error_ctx["error_repr"],
                 )
+                last_error = e
+                last_error_ctx = dict(error_ctx)
                 sleep_s, global_backoff = cm_ccxt_utils.adjusted_sleep_seconds(
                     current_backoff=backoff,
                     is_rate_limit=bool(error_ctx["is_rate_limit"]),
@@ -2097,6 +2101,13 @@ class CandlestickManager:
                     await self._set_global_rate_limit(global_backoff)
                 await asyncio.sleep(sleep_s)
                 backoff = min(backoff * 2.0, backoff_cap)
+        if last_error_ctx is not None:
+            raise RuntimeError(
+                "ccxt ohlcv fetch exhausted retries "
+                f"exchange={self._ex_id} symbol={symbol} tf={tf_norm} "
+                f"since_ms={int(since_ms)} limit={int(limit)} attempts={int(max_attempts)} "
+                f"last_error_type={last_error_ctx['err_type']} last_error={last_error_ctx['error_repr']}"
+            ) from last_error
         return []
 
     # ----- Array slicing helpers -----
@@ -2137,6 +2148,41 @@ class CandlestickManager:
             floor_minute_fn=_floor_minute,
             normalize_ccxt_volume_to_base_fn=normalize_ccxt_volume_to_base,
         )
+
+    async def _invoke_paginated_fetch(
+        self,
+        symbol: str,
+        since_ms: int,
+        end_exclusive_ms: int,
+        *,
+        timeframe: Optional[str] = None,
+        tf: Optional[str] = None,
+        on_batch: Optional[Callable[[np.ndarray], None]] = None,
+    ) -> np.ndarray:
+        """Invoke paginated fetch without swallowing internal TypeErrors.
+
+        Some tests monkeypatch `_fetch_ohlcv_paginated` with a simplified signature that
+        does not accept `on_batch`. Detect that explicitly instead of catching arbitrary
+        TypeErrors from the fetch implementation.
+        """
+        fetch_fn = self._fetch_ohlcv_paginated
+        kwargs: Dict[str, Any] = {}
+        if timeframe is not None:
+            kwargs["timeframe"] = timeframe
+        if tf is not None:
+            kwargs["tf"] = tf
+        if on_batch is not None:
+            try:
+                params = inspect.signature(fetch_fn).parameters.values()
+                supports_on_batch = any(
+                    param.name == "on_batch" or param.kind == inspect.Parameter.VAR_KEYWORD
+                    for param in params
+                )
+            except (TypeError, ValueError):
+                supports_on_batch = True
+            if supports_on_batch:
+                kwargs["on_batch"] = on_batch
+        return await fetch_fn(symbol, since_ms, end_exclusive_ms, **kwargs)
 
     async def _fetch_ohlcv_paginated(
         self,
@@ -2186,7 +2232,11 @@ class CandlestickManager:
                 break
             arr = self._normalize_ccxt_ohlcv(page)
             if arr.size == 0:
-                break
+                raise RuntimeError(
+                    "normalized ccxt ohlcv page was empty despite non-empty raw payload "
+                    f"exchange={self._ex_id} symbol={symbol} tf={tf_norm} "
+                    f"since_ms={int(since)} raw_rows={len(page)}"
+                )
             if probe_limit is not None and not self._ccxt_limit_probe_done:
                 # If Bitget returns >200 rows, we can safely use 1000 going forward.
                 if arr.shape[0] > 200:
@@ -2217,43 +2267,35 @@ class CandlestickManager:
             if arr.size == 0:
                 break
             # Diagnostics: page ts range and step
-            try:
-                first_ts = int(arr[0]["ts"])  # type: ignore[index]
-                last_ts = int(arr[-1]["ts"])  # type: ignore[index]
-                if arr.shape[0] > 1:
-                    diffs = np.diff(arr["ts"].astype(np.int64))
-                    max_step = int(diffs.max())
-                    min_step = int(diffs.min())
-                    # Expect step to match the requested timeframe's period
-                    # Log at DEBUG - unexpected steps are common on illiquid exchanges and aren't actionable
-                    if max_step != period_ms or min_step != period_ms:
-                        warn_key = (self._ex_id, symbol, tf_norm)
-                        if warn_key not in self._step_warning_keys:
-                            self._step_warning_keys.add(warn_key)
-                            self.log.debug(
-                                f"[candle] unexpected step for tf exchange={self._ex_id} symbol={symbol} tf={tf_norm} expected={period_ms} min_step={min_step} max_step={max_step}"
-                            )
-                else:
-                    max_step = ONE_MIN_MS
-            except Exception:
-                first_ts = last_ts = 0
+            first_ts = int(arr[0]["ts"])  # type: ignore[index]
+            last_ts = int(arr[-1]["ts"])  # type: ignore[index]
+            if arr.shape[0] > 1:
+                diffs = np.diff(arr["ts"].astype(np.int64))
+                max_step = int(diffs.max())
+                min_step = int(diffs.min())
+                # Expect step to match the requested timeframe's period
+                # Log at DEBUG - unexpected steps are common on illiquid exchanges and aren't actionable
+                if max_step != period_ms or min_step != period_ms:
+                    warn_key = (self._ex_id, symbol, tf_norm)
+                    if warn_key not in self._step_warning_keys:
+                        self._step_warning_keys.add(warn_key)
+                        self.log.debug(
+                            f"[candle] unexpected step for tf exchange={self._ex_id} symbol={symbol} tf={tf_norm} expected={period_ms} min_step={min_step} max_step={max_step}"
+                        )
             # Record gaps inside payload and between pages as verified no-trade gaps (exchange-provided).
             if self._record_payload_gaps_as_known and tf_norm == "1m":
-                try:
-                    ts_arr = arr["ts"].astype(np.int64)
-                    if ts_arr.size > 1:
-                        diffs = np.diff(ts_arr)
-                        gap_idxs = np.where(diffs > period_ms)[0]
-                        for i in gap_idxs:
-                            gap_start = int(ts_arr[i] + period_ms)
-                            gap_end = int(ts_arr[i + 1] - period_ms)
-                            self._record_verified_gap(symbol, gap_start, gap_end)
-                    if prev_last_ts is not None and first_ts > prev_last_ts + period_ms:
-                        gap_start = int(prev_last_ts + period_ms)
-                        gap_end = int(first_ts - period_ms)
+                ts_arr = arr["ts"].astype(np.int64)
+                if ts_arr.size > 1:
+                    diffs = np.diff(ts_arr)
+                    gap_idxs = np.where(diffs > period_ms)[0]
+                    for i in gap_idxs:
+                        gap_start = int(ts_arr[i] + period_ms)
+                        gap_end = int(ts_arr[i + 1] - period_ms)
                         self._record_verified_gap(symbol, gap_start, gap_end)
-                except Exception:
-                    pass
+                if prev_last_ts is not None and first_ts > prev_last_ts + period_ms:
+                    gap_start = int(prev_last_ts + period_ms)
+                    gap_end = int(first_ts - period_ms)
+                    self._record_verified_gap(symbol, gap_start, gap_end)
 
             all_rows.append(arr)
             pages += 1
@@ -2274,15 +2316,12 @@ class CandlestickManager:
                 try:
                     on_batch(arr)
                 except Exception as on_batch_err:
-                    self.log.error(
-                        "on_batch callback failed; stopping pagination",
-                        extra={
-                            "symbol": symbol,
-                            "timeframe": tf_norm,
-                            "error": str(on_batch_err),
-                        },
-                    )
-                    break
+                    raise RuntimeError(
+                        "ccxt pagination batch callback failed "
+                        f"exchange={self._ex_id} symbol={symbol} tf={tf_norm} "
+                        f"page={pages} since_ms={int(since)} end_exclusive_ms={int(end_excl)} "
+                        f"error_type={type(on_batch_err).__name__} error={on_batch_err}"
+                    ) from on_batch_err
             last_ts = int(arr[-1]["ts"])  # inclusive last
             progressed = cm_ccxt_utils.progress_percent(last_ts, since_start, total_span)
             self._progress_log(
@@ -3669,10 +3708,7 @@ class CandlestickManager:
                         start_ts = max(start_ts, earliest)
 
                 # Load from disk shards for this TF (if present) before resorting to network
-                try:
-                    disk_arr = self._load_from_disk(symbol, start_ts, end_ts, timeframe=out_tf)
-                except Exception:
-                    disk_arr = None
+                disk_arr = self._load_from_disk(symbol, start_ts, end_ts, timeframe=out_tf)
 
                 # Check in-memory TF range cache first (LRU)
                 cache_key = (str(out_tf), int(start_ts), int(end_ts))
@@ -3722,10 +3758,7 @@ class CandlestickManager:
                 end_excl = int(end_ts) + period_ms
 
                 async with self._acquire_fetch_lock(symbol, out_tf):
-                    try:
-                        disk_arr = self._load_from_disk(symbol, start_ts, end_ts, timeframe=out_tf)
-                    except Exception:
-                        disk_arr = None
+                    disk_arr = self._load_from_disk(symbol, start_ts, end_ts, timeframe=out_tf)
 
                     if isinstance(disk_arr, np.ndarray) and disk_arr.size:
                         out_disk = self._slice_ts_range(disk_arr, start_ts, end_ts)
@@ -3761,21 +3794,13 @@ class CandlestickManager:
                         persisted_batches = True
                         self._persist_batch(symbol, batch, timeframe=out_tf)
 
-                    try:
-                        fetched = await self._fetch_ohlcv_paginated(
-                            symbol,
-                            int(start_ts),
-                            int(end_excl),
-                            timeframe=out_tf,
-                            on_batch=_persist_tf_batch,
-                        )
-                    except TypeError:
-                        fetched = await self._fetch_ohlcv_paginated(
-                            symbol,
-                            int(start_ts),
-                            int(end_excl),
-                            timeframe=out_tf,
-                        )
+                    fetched = await self._invoke_paginated_fetch(
+                        symbol,
+                        int(start_ts),
+                        int(end_excl),
+                        timeframe=out_tf,
+                        on_batch=_persist_tf_batch,
+                    )
                     if fetched.size == 0:
                         if isinstance(disk_arr, np.ndarray) and disk_arr.size:
                             out = self._slice_ts_range(disk_arr, start_ts, end_ts)
@@ -4034,10 +4059,7 @@ class CandlestickManager:
                     end_excl = min(end_ts + ONE_MIN_MS, end_finalized + ONE_MIN_MS)
                     if adj_start_ts < end_excl:
                         async with self._acquire_fetch_lock(symbol, "1m"):
-                            try:
-                                self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
-                            except Exception:
-                                pass
+                            self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
                             arr = _ensure_dtype(
                                 self._cache.get(symbol, np.empty((0,), dtype=CANDLE_DTYPE))
                             )
@@ -4049,10 +4071,7 @@ class CandlestickManager:
                             if unknown_after:
                                 # Only attempt archive prefetch for genuinely missing full days.
                                 await self._prefetch_archives_for_range(symbol, adj_start_ts, end_ts)
-                                try:
-                                    self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
-                                except Exception:
-                                    pass
+                                self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
                                 arr = _ensure_dtype(
                                     self._cache.get(symbol, np.empty((0,), dtype=CANDLE_DTYPE))
                                 )
@@ -4140,19 +4159,12 @@ class CandlestickManager:
                                     span_end_excl = min(e2 + ONE_MIN_MS, end_excl)
                                     if s2 >= span_end_excl:
                                         continue
-                                    try:
-                                        fetched = await self._fetch_ohlcv_paginated(
-                                            symbol,
-                                            s2,
-                                            span_end_excl,
-                                            on_batch=_persist_hist_batch,
-                                        )
-                                    except TypeError:
-                                        fetched = await self._fetch_ohlcv_paginated(
-                                            symbol,
-                                            s2,
-                                            span_end_excl,
-                                        )
+                                    fetched = await self._invoke_paginated_fetch(
+                                        symbol,
+                                        s2,
+                                        span_end_excl,
+                                        on_batch=_persist_hist_batch,
+                                    )
                                     if deferred_index_any:
                                         try:
                                             self.flush_deferred_index(symbol, tf="1m")
@@ -4264,10 +4276,7 @@ class CandlestickManager:
                 )
                 if need_fetch:
                     async with self._acquire_fetch_lock(symbol, "1m"):
-                        try:
-                            self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
-                        except Exception:
-                            pass
+                        self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
                         arr = _ensure_dtype(
                             self._cache.get(symbol, np.empty((0,), dtype=CANDLE_DTYPE))
                         )
@@ -4298,19 +4307,12 @@ class CandlestickManager:
                                     last_refresh_ms=now,
                                 )
 
-                            try:
-                                fetched = await self._fetch_ohlcv_paginated(
-                                    symbol,
-                                    fetch_start,
-                                    end_excl,
-                                    on_batch=_persist_present_batch,
-                                )
-                            except TypeError:
-                                fetched = await self._fetch_ohlcv_paginated(
-                                    symbol,
-                                    fetch_start,
-                                    end_excl,
-                                )
+                            fetched = await self._invoke_paginated_fetch(
+                                symbol,
+                                fetch_start,
+                                end_excl,
+                                on_batch=_persist_present_batch,
+                            )
                             if fetched.size and not persisted_batches:
                                 self._persist_batch(
                                     symbol,
@@ -4347,10 +4349,7 @@ class CandlestickManager:
                 if fetch_start >= end_excl_range:
                     break
                 async with self._acquire_fetch_lock(symbol, "1m"):
-                    try:
-                        self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
-                    except Exception:
-                        pass
+                    self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
                     arr = _ensure_dtype(self._cache.get(symbol, np.empty((0,), dtype=CANDLE_DTYPE)))
                     sub = self._slice_ts_range(arr, start_ts, end_ts) if arr.size else arr
                     if sub.size == 0:
@@ -4374,19 +4373,12 @@ class CandlestickManager:
                             last_refresh_ms=now,
                         )
 
-                    try:
-                        fetched = await self._fetch_ohlcv_paginated(
-                            symbol,
-                            fetch_start,
-                            end_excl_range,
-                            on_batch=_persist_tail_batch,
-                        )
-                    except TypeError:
-                        fetched = await self._fetch_ohlcv_paginated(
-                            symbol,
-                            fetch_start,
-                            end_excl_range,
-                        )
+                    fetched = await self._invoke_paginated_fetch(
+                        symbol,
+                        fetch_start,
+                        end_excl_range,
+                        on_batch=_persist_tail_batch,
+                    )
                     if fetched.size == 0:
                         break
                     if not persisted_batches:
@@ -4430,10 +4422,7 @@ class CandlestickManager:
                         continue
                     end_excl_gap = e + ONE_MIN_MS
                     async with self._acquire_fetch_lock(symbol, "1m"):
-                        try:
-                            self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
-                        except Exception:
-                            pass
+                        self._load_from_disk(symbol, start_ts, end_ts, timeframe="1m")
                         arr = _ensure_dtype(
                             self._cache.get(symbol, np.empty((0,), dtype=CANDLE_DTYPE))
                         )
@@ -4454,19 +4443,12 @@ class CandlestickManager:
                                 last_refresh_ms=now,
                             )
 
-                        try:
-                            fetched = await self._fetch_ohlcv_paginated(
-                                symbol,
-                                s,
-                                end_excl_gap,
-                                on_batch=_persist_gap_batch,
-                            )
-                        except TypeError:
-                            fetched = await self._fetch_ohlcv_paginated(
-                                symbol,
-                                s,
-                                end_excl_gap,
-                            )
+                        fetched = await self._invoke_paginated_fetch(
+                            symbol,
+                            s,
+                            end_excl_gap,
+                            on_batch=_persist_gap_batch,
+                        )
                         attempts += 1
                         attempted.append((s, e))
                         if fetched.size:
@@ -4548,6 +4530,10 @@ class CandlestickManager:
             raise ValueError("max_age_ms cannot be negative")
         now = _utc_now_ms()
         end_current = _floor_minute(now)
+        failure_notes: List[str] = []
+
+        def _record_failure(stage: str, exc: BaseException) -> None:
+            failure_notes.append(f"{stage}:{type(exc).__name__}:{exc}")
 
         # 1) TTL cache
         if max_age_ms is not None and max_age_ms > 0:
@@ -4576,8 +4562,8 @@ class CandlestickManager:
                         self._current_close_cache[symbol] = (price, now)
                         self._log("debug", "get_current_close_mem_candle", symbol=symbol)
                         return price
-        except Exception:
-            pass
+        except Exception as exc:
+            _record_failure("memory_current_minute", exc)
 
         # 3) Use candles API to get current minute
         got = None
@@ -4603,13 +4589,14 @@ class CandlestickManager:
                 self._current_close_cache[symbol] = (price, now)
                 self._log("debug", "get_current_close_from_candles", symbol=symbol)
                 return price
-        except Exception:
-            pass
+        except Exception as exc:
+            _record_failure("candles_current_minute", exc)
 
         if got is None or got.size == 0:
             try:
                 last_ref = self._get_last_refresh_ms(symbol)
-            except Exception:
+            except Exception as exc:
+                _record_failure("last_refresh_meta", exc)
                 last_ref = 0
             # If we have a recent refresh (or TTL not enforced), fall back to last finalized candle
             # to avoid redundant tail fetches. Treat max_age_ms=None as no TTL barrier.
@@ -4639,8 +4626,8 @@ class CandlestickManager:
                                 ts=int(got_prev_sorted[-1]["ts"]),
                             )
                             return price
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _record_failure("candles_last_finalized", exc)
 
         # 3b) Directly fetch a small tail window via OHLCV (with cross-process lock) and merge to cache
         if self.exchange is not None:
@@ -4655,8 +4642,8 @@ class CandlestickManager:
                         self._load_from_disk(
                             symbol, last_final_locked, end_current_locked, timeframe="1m"
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _record_failure("tail_disk_reload", exc)
 
                     arr_cache = self._cache.get(symbol)
                     if arr_cache is not None and arr_cache.size:
@@ -4714,8 +4701,15 @@ class CandlestickManager:
                         try:
                             self._enforce_memory_retention(symbol)
                             self._save_range(symbol, arr, timeframe="1m")
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            _record_failure("tail_persist", exc)
+                            self._log(
+                                "warning",
+                                "get_current_close_tail_persist_failed",
+                                symbol=symbol,
+                                error_type=type(exc).__name__,
+                                error=repr(exc),
+                            )
                         self._set_last_refresh_meta(symbol, last_refresh_ms=now_locked)
                         self._current_close_cache[symbol] = (price, now_locked)
                         self._log(
@@ -4725,8 +4719,8 @@ class CandlestickManager:
                             rows=arr.shape[0],
                         )
                         return price
-            except Exception:
-                pass
+            except Exception as exc:
+                _record_failure("direct_ohlcv_tail", exc)
 
         # 4) Last resort: ticker
         if self.exchange is not None:
@@ -4749,8 +4743,8 @@ class CandlestickManager:
                     if price is not None:
                         self._current_close_cache[symbol] = (price, now)
                         return price
-            except Exception:
-                pass
+            except Exception as exc:
+                _record_failure("ticker", exc)
 
         # 5) Fallback to last cached finalized candle
         if price is None:
@@ -4758,10 +4752,23 @@ class CandlestickManager:
             if arr2 is not None and arr2.size:
                 arr2 = np.sort(_ensure_dtype(arr2), order="ts")
                 price = float(arr2[-1]["c"])
+                if failure_notes:
+                    self._log(
+                        "warning",
+                        "get_current_close_fallback_finalized",
+                        symbol=symbol,
+                        failure_count=len(failure_notes),
+                        last_failure=failure_notes[-1],
+                    )
                 self._log("debug", "get_current_close_from_cache_finalized", symbol=symbol)
 
         if price is None:
-            return float("nan")
+            detail = (
+                failure_notes[-1] if failure_notes else "no current-close source produced a price"
+            )
+            raise RuntimeError(
+                f"unable to resolve current close symbol={symbol} max_age_ms={max_age_ms} detail={detail}"
+            )
 
         self._current_close_cache[symbol] = (float(price), int(now))
         return float(price)
@@ -5172,10 +5179,7 @@ class CandlestickManager:
         lookback_candles = max(int(self.default_window_candles), int(self.overlap_candles)) + 10
         disk_since = max(0, int(end_exclusive) - int(lookback_candles) * ONE_MIN_MS)
 
-        try:
-            self._load_from_disk(symbol, disk_since, end_exclusive, timeframe="1m")
-        except Exception:
-            pass
+        self._load_from_disk(symbol, disk_since, end_exclusive, timeframe="1m")
 
         existing = self._ensure_symbol_cache(symbol)
         existing_last_ts = (
@@ -5208,10 +5212,7 @@ class CandlestickManager:
 
         async with self._acquire_fetch_lock(symbol, "1m"):
             # Re-evaluate with lock in case another process already fetched.
-            try:
-                self._load_from_disk(symbol, disk_since, end_exclusive, timeframe="1m")
-            except Exception:
-                pass
+            self._load_from_disk(symbol, disk_since, end_exclusive, timeframe="1m")
 
             existing = self._ensure_symbol_cache(symbol)
             existing_last_ts = (
@@ -5264,15 +5265,12 @@ class CandlestickManager:
                     last_refresh_ms=now_fetch,
                 )
 
-            try:
-                new_arr = await self._fetch_ohlcv_paginated(
-                    symbol,
-                    since,
-                    end_exclusive,
-                    on_batch=_persist_refresh_batch,
-                )
-            except TypeError:
-                new_arr = await self._fetch_ohlcv_paginated(symbol, since, end_exclusive)
+            new_arr = await self._invoke_paginated_fetch(
+                symbol,
+                since,
+                end_exclusive,
+                on_batch=_persist_refresh_batch,
+            )
             if new_arr.size == 0:
                 # Keep finalized runtime candles contiguous even if there were no fills.
                 self._materialize_runtime_synthetic_gap(symbol, end_exclusive - ONE_MIN_MS)

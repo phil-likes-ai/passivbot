@@ -41,7 +41,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-REL-003 | Harden candlestick critical fetch/freshness paths | queued | L | PB-REL-001 |
 | PB-REL-004 | Harden fill-events malformed payload handling | queued | M | PB-REL-001 |
 | PB-XCH-001 | Add exchange adapter parity coverage for required-input behavior | blocked | M | PB-REL-003, PB-REL-004 |
 | PB-CI-001 | Add secret/dependency/grep gates to CI | queued | M | PB-SEC-001, PB-SEC-003 |
@@ -173,7 +172,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - grep audit on touched files
 
 ## PB-REL-003 — Harden candlestick critical fetch/freshness paths
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `fix/pb-rel-003-candlestick-fail-loud`
 - **Target PR size:** large
 - **Depends on:** `PB-REL-001`
