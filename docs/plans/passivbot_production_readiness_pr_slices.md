@@ -41,7 +41,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-REL-001 | Remove false-success behavior from update prep cycle | queued | M | PB-SEC-001 |
 | PB-REL-002 | Harden warmup/mode-prep broad catches in `src/passivbot.py` | blocked | M | PB-REL-001 |
 | PB-REL-003 | Harden candlestick critical fetch/freshness paths | blocked | L | PB-REL-001 |
 | PB-REL-004 | Harden fill-events malformed payload handling | blocked | M | PB-REL-001 |
@@ -142,7 +141,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - `python -m pytest tests/test_custom_endpoints.py -q`
 
 ## PB-REL-001 — Remove false-success behavior from update prep cycle
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `fix/pb-rel-001-update-prep-fail-loud`
 - **Target PR size:** medium
 - **Depends on:** `PB-SEC-001`

@@ -3914,12 +3914,44 @@ class Passivbot:
         positions_task = asyncio.create_task(self._fetch_and_apply_positions())
         try:
             balance_ok, positions_res = await asyncio.gather(balance_task, positions_task)
-        except Exception:
-            for task in (balance_task, positions_task):
+        except Exception as exc:
+            collaborator_errors = []
+            for name, task in (
+                ("update_balance", balance_task),
+                ("_fetch_and_apply_positions", positions_task),
+            ):
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(balance_task, positions_task, return_exceptions=True)
-            raise
+            for name, task in (
+                ("update_balance", balance_task),
+                ("_fetch_and_apply_positions", positions_task),
+            ):
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    continue
+                except Exception as task_exc:
+                    collaborator_errors.append((name, task_exc))
+            if collaborator_errors:
+                primary_name, primary_exc = collaborator_errors[0]
+                raise RuntimeError(
+                    f"{primary_name} failed during update_positions_and_balance"
+                ) from primary_exc
+            if balance_task.done() and not balance_task.cancelled():
+                task_exc = balance_task.exception()
+                if task_exc is not None:
+                    raise RuntimeError(
+                        "update_balance failed during update_positions_and_balance"
+                    ) from task_exc
+            if positions_task.done() and not positions_task.cancelled():
+                task_exc = positions_task.exception()
+                if task_exc is not None:
+                    raise RuntimeError(
+                        "_fetch_and_apply_positions failed during update_positions_and_balance"
+                    ) from task_exc
+            raise RuntimeError(
+                "update_positions_and_balance failed before collaborator state could be resolved"
+            ) from exc
         positions_ok, fetched_positions_old, fetched_positions_new = positions_res
         if positions_ok and fetched_positions_old is not None:
             try:
