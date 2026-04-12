@@ -393,3 +393,9 @@ Cargo.lock
 # Git worktrees
 .worktrees/
 /.sisyphus
+
+# OMX / local orchestration runtime artifacts
+/.omx/
+
+# Local monitor runtime output
+/monitor/

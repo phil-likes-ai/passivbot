@@ -22,6 +22,7 @@ Historical/supporting docs may add context, but they do not override this queue.
 ## Status legend
 
 - `queued` — ready to implement now
+- `complete` — implemented and verified
 - `blocked` — depends on an earlier slice landing first
 - `deferred` — valid work, but not on the immediate critical path
 - `archived` — historical reference only; do not execute from it
@@ -40,7 +41,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-SEC-001 | Purge runtime artifacts and harden ignore rules | queued | S | none |
 | PB-SEC-002 | Make Telegram bridge auth fail-closed | queued | M | PB-SEC-001 |
 | PB-OPS-001 | Lock monitor relay to safe local-only defaults | queued | M | none |
 | PB-OPS-002 | Lock fill-events dashboard to safe local-only defaults | queued | S | none |
@@ -60,7 +60,7 @@ Historical/supporting docs may add context, but they do not override this queue.
 # Slice cards
 
 ## PB-SEC-001 — Purge runtime artifacts and harden ignore rules
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `chore/pb-sec-001-ignore-runtime-artifacts`
 - **Target PR size:** small
 - **In scope files:** `.gitignore`, tracked `.omx/*` runtime files, tracked runtime `monitor/*` artifacts, related docs if needed
@@ -76,6 +76,7 @@ Historical/supporting docs may add context, but they do not override this queue.
 - **Verification:**
   - `git status --short --untracked-files=all .omx monitor`
   - `git ls-files .omx monitor`
+  - `git check-ignore -v .omx monitor monitor/fake .omx/logs/omx-2026-04-11.jsonl`
 
 ## PB-SEC-002 — Make Telegram bridge auth fail-closed
 - **Status:** queued
