@@ -41,7 +41,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-REL-002 | Harden warmup/mode-prep broad catches in `src/passivbot.py` | queued | M | PB-REL-001 |
 | PB-REL-003 | Harden candlestick critical fetch/freshness paths | queued | L | PB-REL-001 |
 | PB-REL-004 | Harden fill-events malformed payload handling | queued | M | PB-REL-001 |
 | PB-XCH-001 | Add exchange adapter parity coverage for required-input behavior | blocked | M | PB-REL-003, PB-REL-004 |
@@ -157,7 +156,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - grep audit on touched paths: `rg -n "except Exception|except:|return_exceptions=True|\.get\([^\n]*,\s*(0|0\.0|None|False|\{\}|\[\])\)" src/passivbot.py tests`
 
 ## PB-REL-002 — Harden warmup/mode-prep broad catches in `src/passivbot.py`
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `fix/pb-rel-002-passivbot-warmup-hardening`
 - **Target PR size:** medium
 - **Depends on:** `PB-REL-001`

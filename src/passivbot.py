@@ -1579,6 +1579,49 @@ class Passivbot:
         # self.set_live_configs()
         await self._apply_post_market_load_setup()
 
+    def _resolve_live_warmup_float(
+        self,
+        key: str,
+        default: float,
+        *,
+        min_value: float | None = None,
+        max_value: float | None = None,
+    ) -> float:
+        raw_value = get_optional_live_value(self.config, key, default)
+        if raw_value in (None, ""):
+            return float(default)
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"invalid live.{key} during warmup: {raw_value!r}") from exc
+        if not math.isfinite(value):
+            raise RuntimeError(f"invalid live.{key} during warmup: {raw_value!r}")
+        if min_value is not None and value < min_value:
+            raise RuntimeError(
+                f"live.{key} must be >= {min_value} during warmup, got {value!r}"
+            )
+        if max_value is not None and value > max_value:
+            raise RuntimeError(
+                f"live.{key} must be <= {max_value} during warmup, got {value!r}"
+            )
+        return value
+
+    def _resolve_live_warmup_int(
+        self,
+        key: str,
+        default: int,
+        *,
+        min_value: int | None = None,
+        max_value: int | None = None,
+    ) -> int:
+        value = int(self._resolve_live_warmup_float(key, float(default)))
+        if min_value is not None and value < min_value:
+            raise RuntimeError(f"live.{key} must be >= {min_value} during warmup, got {value!r}")
+        if max_value is not None and value > max_value:
+            raise RuntimeError(f"live.{key} must be <= {max_value} during warmup, got {value!r}")
+        return value
+
+
     async def warmup_candles_staggered(
         self,
         *,
@@ -1606,12 +1649,16 @@ class Passivbot:
         for pside in ("long", "short"):
             try:
                 max_n = int(self.get_max_n_positions(pside))
-            except Exception:
-                max_n = 0
+            except Exception as exc:
+                raise RuntimeError(
+                    f"failed to resolve max position count during warmup for {pside}"
+                ) from exc
             try:
                 current_n = int(self.get_current_n_positions(pside))
-            except Exception:
-                current_n = len(self.get_symbols_with_pos(pside))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"failed to resolve current position count during warmup for {pside}"
+                ) from exc
             max_counts[pside] = max_n
             pos_counts[pside] = current_n
             slots_open = max_n > current_n
@@ -1627,11 +1674,11 @@ class Passivbot:
 
         # Determine concurrency: explicit arg > config > exchange-specific default
         if concurrency is None:
-            cfg_concurrency = get_optional_live_value(self.config, "warmup_concurrency", 0)
-            try:
-                cfg_concurrency = int(cfg_concurrency) if cfg_concurrency else 0
-            except Exception:
-                cfg_concurrency = 0
+            cfg_concurrency = self._resolve_live_warmup_int(
+                "warmup_concurrency",
+                0,
+                min_value=0,
+            )
             if cfg_concurrency > 0:
                 concurrency = cfg_concurrency
             else:
@@ -1644,11 +1691,11 @@ class Passivbot:
         concurrency = max(1, int(concurrency))
 
         # Random jitter delay to prevent API rate limit storms when multiple bots start simultaneously
-        max_jitter = get_optional_live_value(self.config, "warmup_jitter_seconds", 30.0)
-        try:
-            max_jitter = float(max_jitter)
-        except Exception:
-            max_jitter = 30.0
+        max_jitter = self._resolve_live_warmup_float(
+            "warmup_jitter_seconds",
+            30.0,
+            min_value=0.0,
+        )
         if max_jitter > 0:
             jitter = random.uniform(0, max_jitter)
             if jitter > 5:
@@ -1675,16 +1722,17 @@ class Passivbot:
         # Determine window per symbol based on actual EMA needs (lazy & frugal).
         # Fetch max-span * (1 + warmup_ratio) to give EMAs enough runway without overfetching.
         default_win = int(getattr(self.cm, "default_window_candles", 120))
-        try:
-            warmup_ratio = float(get_optional_live_value(self.config, "warmup_ratio", 0.0))
-        except Exception:
-            warmup_ratio = 0.0
-        try:
-            max_warmup_minutes = int(
-                get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0
-            )
-        except Exception:
-            max_warmup_minutes = 0
+        warmup_ratio = self._resolve_live_warmup_float(
+            "warmup_ratio",
+            0.0,
+            min_value=0.0,
+            max_value=1.0,
+        )
+        max_warmup_minutes = self._resolve_live_warmup_int(
+            "max_warmup_minutes",
+            0,
+            min_value=0,
+        )
         large_span_threshold = 2 * 24 * 60  # minutes; match CandlestickManager large-span logic
 
         per_symbol_win, per_symbol_h1_hours, per_symbol_skip_historical = compute_live_warmup_windows(
@@ -1705,8 +1753,8 @@ class Passivbot:
                 end_final,
                 end_final_hour,
             )
-        except Exception as e:
-            logging.info("[boot] candle index rebuild skipped due to: %s", e)
+        except Exception as exc:
+            raise RuntimeError("failed to rebuild required candle indices during warmup") from exc
 
         sem = asyncio.Semaphore(max(1, int(concurrency)))
         completed = 0
@@ -1720,56 +1768,48 @@ class Passivbot:
             logging.info(
                 f"[warmup] starting: {n} symbols, concurrency={concurrency}, ttl={int(ttl_ms/1000)}s, window=[{wmin},{wmax}]m"
             )
-            try:
-                longest_span = int(math.ceil(wmax / max(1.0, (1.0 + warmup_ratio))))
-            except Exception:
-                longest_span = wmax
+            longest_span = int(math.ceil(wmax / max(1.0, (1.0 + warmup_ratio))))
             logging.info(
                 "[warmup] target | longest_span=%dm warmup_ratio=%.3g max_warmup_minutes=%s",
                 int(longest_span),
                 float(warmup_ratio),
                 "none" if not max_warmup_minutes else str(int(max_warmup_minutes)),
             )
-            try:
-                logging.info(
-                    "[warmup] slot view | long: %d/%d open=%s forager=%s symbols=%d | short: %d/%d open=%s forager=%s symbols=%d",
-                    pos_counts.get("long", 0),
-                    max_counts.get("long", 0),
-                    "yes" if slots_open_by_side.get("long") else "no",
-                    "yes" if forager_needed.get("long") else "no",
-                    len(symbols_by_side.get("long", set())),
-                    pos_counts.get("short", 0),
-                    max_counts.get("short", 0),
-                    "yes" if slots_open_by_side.get("short") else "no",
-                    "yes" if forager_needed.get("short") else "no",
-                    len(symbols_by_side.get("short", set())),
-                )
-            except Exception:
-                pass
-            try:
-                long_syms = symbols_by_side.get("long", set())
-                short_syms = symbols_by_side.get("short", set())
-                long_wins = [per_symbol_win[s] for s in long_syms if s in per_symbol_win]
-                short_wins = [per_symbol_win[s] for s in short_syms if s in per_symbol_win]
-                long_min = min(long_wins) if long_wins else 0
-                long_max = max(long_wins) if long_wins else 0
-                short_min = min(short_wins) if short_wins else 0
-                short_max = max(short_wins) if short_wins else 0
-                logging.info(
-                    "[warmup] windows | long:[%d,%d]m short:[%d,%d]m",
-                    long_min,
-                    long_max,
-                    short_min,
-                    short_max,
-                )
-            except Exception:
-                pass
+            logging.info(
+                "[warmup] slot view | long: %d/%d open=%s forager=%s symbols=%d | short: %d/%d open=%s forager=%s symbols=%d",
+                pos_counts.get("long", 0),
+                max_counts.get("long", 0),
+                "yes" if slots_open_by_side.get("long") else "no",
+                "yes" if forager_needed.get("long") else "no",
+                len(symbols_by_side.get("long", set())),
+                pos_counts.get("short", 0),
+                max_counts.get("short", 0),
+                "yes" if slots_open_by_side.get("short") else "no",
+                "yes" if forager_needed.get("short") else "no",
+                len(symbols_by_side.get("short", set())),
+            )
+            long_syms = symbols_by_side.get("long", set())
+            short_syms = symbols_by_side.get("short", set())
+            long_wins = [per_symbol_win[s] for s in long_syms if s in per_symbol_win]
+            short_wins = [per_symbol_win[s] for s in short_syms if s in per_symbol_win]
+            long_min = min(long_wins) if long_wins else 0
+            long_max = max(long_wins) if long_wins else 0
+            short_min = min(short_wins) if short_wins else 0
+            short_max = max(short_wins) if short_wins else 0
+            logging.info(
+                "[warmup] windows | long:[%d,%d]m short:[%d,%d]m",
+                long_min,
+                long_max,
+                short_min,
+                short_max,
+            )
             # Enable batch mode for zero-candle synthesis warnings during warmup
             self.cm.start_synth_candle_batch()
             # Enable batch mode for candle replacement logs during warmup
             self.cm.start_candle_replace_batch()
 
         fetch_delay_s = self._get_fetch_delay_seconds()
+        warmup_failures: list[str] = []
 
         async def one(sym: str):
             nonlocal completed, last_log_ms
@@ -1787,8 +1827,8 @@ class Passivbot:
                         skip_historical_gap_fill=skip_hist,  # allow gap fill on large warmup spans
                         max_lookback_candles=win,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    warmup_failures.append(f"1m:{sym}:{type(exc).__name__}:{exc}")
                 finally:
                     if fetch_delay_s > 0:
                         await asyncio.sleep(fetch_delay_s)
@@ -1807,40 +1847,50 @@ class Passivbot:
                             )
                             last_log_ms = now_ms
 
-        await asyncio.gather(*(one(s) for s in symbols))
+        try:
+            await asyncio.gather(*(one(s) for s in symbols))
 
-        # Warm 1h candles for grid log-range EMAs
-        hour_sem = asyncio.Semaphore(max(1, int(concurrency)))
+            # Warm 1h candles for grid log-range EMAs
+            hour_sem = asyncio.Semaphore(max(1, int(concurrency)))
 
-        async def warm_hour(sym: str):
-            async with hour_sem:
-                warm_hours = int(per_symbol_h1_hours.get(sym, 0) or 0)
-                if warm_hours <= 0:
-                    return
-                start_ts = int(end_final_hour - warm_hours * 60 * ONE_MIN_MS)
-                try:
-                    await self.cm.get_candles(
-                        sym,
-                        start_ts=start_ts,
-                        end_ts=None,
-                        max_age_ms=ttl_ms,
-                        timeframe="1h",
-                        strict=False,
-                        skip_historical_gap_fill=True,  # Live warmup: don't waste time on old gaps
-                        max_lookback_candles=warm_hours,
-                    )
-                except Exception:
-                    pass
-                finally:
-                    if fetch_delay_s > 0:
-                        await asyncio.sleep(fetch_delay_s)
+            async def warm_hour(sym: str):
+                async with hour_sem:
+                    warm_hours = int(per_symbol_h1_hours.get(sym, 0) or 0)
+                    if warm_hours <= 0:
+                        return
+                    start_ts = int(end_final_hour - warm_hours * 60 * ONE_MIN_MS)
+                    try:
+                        await self.cm.get_candles(
+                            sym,
+                            start_ts=start_ts,
+                            end_ts=None,
+                            max_age_ms=ttl_ms,
+                            timeframe="1h",
+                            strict=False,
+                            skip_historical_gap_fill=True,  # Live warmup: don't waste time on old gaps
+                            max_lookback_candles=warm_hours,
+                        )
+                    except Exception as exc:
+                        warmup_failures.append(f"1h:{sym}:{type(exc).__name__}:{exc}")
+                    finally:
+                        if fetch_delay_s > 0:
+                            await asyncio.sleep(fetch_delay_s)
 
-        await asyncio.gather(*(warm_hour(s) for s in symbols))
+            await asyncio.gather(*(warm_hour(s) for s in symbols))
+        finally:
+            # Flush batched zero-candle synthesis warnings
+            self.cm.flush_synth_candle_batch()
+            # Flush batched candle replacement logs
+            self.cm.flush_candle_replace_batch()
 
-        # Flush batched zero-candle synthesis warnings
-        self.cm.flush_synth_candle_batch()
-        # Flush batched candle replacement logs
-        self.cm.flush_candle_replace_batch()
+        if warmup_failures:
+            failures_preview = "; ".join(warmup_failures[:3])
+            if len(warmup_failures) > 3:
+                failures_preview += f"; ... (+{len(warmup_failures) - 3} more)"
+            raise RuntimeError(
+                "warmup_candles_staggered failed for required symbol/timeframe fetches: "
+                + failures_preview
+            )
 
     async def rebuild_required_candle_indices(
         self,
