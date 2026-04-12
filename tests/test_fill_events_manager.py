@@ -2372,6 +2372,163 @@ async def test_manager_refresh_registers_gap_and_reraises_rate_limit(tmp_path: P
     assert gaps[0]["reason"] == GAP_REASON_FETCH_FAILED
 
 
+@pytest.mark.asyncio
+async def test_manager_refresh_raises_on_missing_required_fill_key(
+    tmp_path: Path, sample_events: List[Dict[str, object]]
+):
+    cache_dir = tmp_path / "fills_missing_key"
+    malformed = dict(sample_events[0])
+    malformed["id"] = "tid-missing-qty"
+    malformed.pop("qty")
+
+    manager = FillEventsManager(
+        exchange="bitget",
+        user="default",
+        fetcher=_StaticFetcher([malformed]),
+        cache_path=cache_dir,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await manager.refresh()
+
+    message = str(exc_info.value)
+    assert "exchange=bitget" in message
+    assert "event_id='tid-missing-qty'" in message
+    assert "missing required keys: ['qty']" in message
+    assert not list(cache_dir.glob("*.json"))
+
+
+@pytest.mark.asyncio
+async def test_manager_refresh_raises_on_binance_income_event_missing_trade_details(
+    monkeypatch, tmp_path: Path
+):
+    cache_dir = tmp_path / "fills_binance_missing_trade_details"
+    income_events = [
+        {
+            "id": "trade-income-only",
+            "timestamp": 1_700_000_000_000,
+            "datetime": "",
+            "symbol": "ADA/USDT:USDT",
+            "side": "buy",
+            "qty": 0.0,
+            "price": 0.0,
+            "pnl": 1.5,
+            "fees": None,
+            "pb_order_type": "",
+            "position_side": "unknown",
+            "client_order_id": "",
+        }
+    ]
+
+    async def fake_fetch_income(self, since_ms, until_ms):
+        return [dict(ev) for ev in income_events]
+
+    async def fake_fetch_symbol_trades(self, ccxt_symbol, since_ms, until_ms):
+        return []
+
+    async def fake_get_market_symbols(self):
+        return {"ADA/USDT:USDT"}
+
+    fetcher = BinanceFetcher(
+        api=object(),
+        symbol_resolver=lambda sym: sym or "",
+        positions_provider=lambda: [],
+        open_orders_provider=lambda: [],
+    )
+    monkeypatch.setattr(fetcher, "_fetch_income", types.MethodType(fake_fetch_income, fetcher))
+    monkeypatch.setattr(
+        fetcher,
+        "_fetch_symbol_trades",
+        types.MethodType(fake_fetch_symbol_trades, fetcher),
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_get_market_symbols",
+        types.MethodType(fake_get_market_symbols, fetcher),
+    )
+
+    manager = FillEventsManager(
+        exchange="binance",
+        user="default",
+        fetcher=fetcher,
+        cache_path=cache_dir,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await manager.refresh()
+
+    message = str(exc_info.value)
+    assert "exchange=binance" in message
+    assert "event_id='trade-income-only'" in message
+    assert "qty(zero)" in message
+    assert "price(non-positive=0.0)" in message
+    assert "position_side(invalid='unknown')" in message
+    assert not list(cache_dir.glob("*.json"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exchange", "payload", "expected_fragments"),
+    [
+        (
+            "bybit",
+            {
+                "id": "bybit-empty-symbol",
+                "timestamp": 1_700_000_100_000,
+                "datetime": "",
+                "symbol": "",
+                "side": "sell",
+                "qty": -0.1,
+                "price": 100.0,
+                "pnl": 0.0,
+                "pb_order_type": "unknown",
+                "position_side": "long",
+                "client_order_id": "",
+            },
+            ["exchange=bybit", "event_id='bybit-empty-symbol'", "symbol(empty)"],
+        ),
+        (
+            "hyperliquid",
+            {
+                "id": "hl-empty-side",
+                "timestamp": 1_700_000_200_000,
+                "datetime": "",
+                "symbol": "BTC/USDT:USDT",
+                "side": "",
+                "qty": 0.2,
+                "price": 101.0,
+                "pnl": 0.0,
+                "pb_order_type": "unknown",
+                "position_side": "short",
+                "client_order_id": "0xabc",
+            },
+            ["exchange=hyperliquid", "event_id='hl-empty-side'", "side(invalid='')"],
+        ),
+    ],
+)
+async def test_manager_refresh_raises_on_exchange_specific_invalid_fill_values(
+    tmp_path: Path,
+    exchange: str,
+    payload: Dict[str, object],
+    expected_fragments: List[str],
+):
+    cache_dir = tmp_path / f"fills_invalid_{exchange}"
+    manager = FillEventsManager(
+        exchange=exchange,
+        user="default",
+        fetcher=_StaticFetcher([dict(payload)]),
+        cache_path=cache_dir,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await manager.refresh()
+
+    message = str(exc_info.value)
+    for fragment in expected_fragments:
+        assert fragment in message
+    assert not list(cache_dir.glob("*.json"))
+
+
 # ---------------------------------------------------------------------------
 # OkxFetcher tests
 # ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ import fill_events_position_utils as position_utils
 import fill_events_query_utils as query_utils
 import fill_events_time_utils as time_utils
 import json
+import math
 import sys
 
 if sys.platform.startswith("win"):
@@ -81,6 +82,83 @@ from procedures import load_user_info
 from pure_funcs import ensure_millis
 
 logger = logging.getLogger(__name__)
+
+_REQUIRED_FILL_EVENT_KEYS = (
+    "id",
+    "timestamp",
+    "symbol",
+    "side",
+    "qty",
+    "price",
+    "pnl",
+    "pb_order_type",
+    "position_side",
+    "client_order_id",
+)
+
+
+def _validate_required_fill_event_payload(data: Dict[str, object]) -> None:
+    missing = [key for key in _REQUIRED_FILL_EVENT_KEYS if key not in data]
+    if missing:
+        raise ValueError(f"missing required keys: {missing}")
+
+    invalid: List[str] = []
+    if data.get("id") is None or not str(data.get("id")).strip():
+        invalid.append("id(empty)")
+
+    try:
+        timestamp = int(data["timestamp"])
+    except (TypeError, ValueError):
+        invalid.append(f"timestamp(invalid={data.get('timestamp')!r})")
+    else:
+        if timestamp <= 0:
+            invalid.append(f"timestamp(non-positive={timestamp})")
+
+    symbol = str(data["symbol"] or "").strip()
+    if not symbol:
+        invalid.append("symbol(empty)")
+
+    side = str(data["side"] or "").strip().lower()
+    if side not in {"buy", "sell"}:
+        invalid.append(f"side(invalid={data.get('side')!r})")
+
+    try:
+        qty = float(data["qty"])
+    except (TypeError, ValueError):
+        invalid.append(f"qty(invalid={data.get('qty')!r})")
+    else:
+        if not math.isfinite(qty):
+            invalid.append(f"qty(non-finite={data.get('qty')!r})")
+        elif qty == 0.0:
+            invalid.append("qty(zero)")
+
+    try:
+        price = float(data["price"])
+    except (TypeError, ValueError):
+        invalid.append(f"price(invalid={data.get('price')!r})")
+    else:
+        if not math.isfinite(price):
+            invalid.append(f"price(non-finite={data.get('price')!r})")
+        elif price <= 0.0:
+            invalid.append(f"price(non-positive={price})")
+
+    try:
+        pnl = float(data["pnl"])
+    except (TypeError, ValueError):
+        invalid.append(f"pnl(invalid={data.get('pnl')!r})")
+    else:
+        if not math.isfinite(pnl):
+            invalid.append(f"pnl(non-finite={data.get('pnl')!r})")
+
+    if not str(data["pb_order_type"] or "").strip():
+        invalid.append("pb_order_type(empty)")
+
+    position_side = str(data["position_side"] or "").strip().lower()
+    if position_side not in {"long", "short"}:
+        invalid.append(f"position_side(invalid={data.get('position_side')!r})")
+
+    if invalid:
+        raise ValueError(f"invalid required fields: {invalid}")
 
 # Throttle state for spammy warnings
 _pnl_discrepancy_last_log: Dict[str, float] = {}  # exchange:user -> last log time
@@ -1562,14 +1640,13 @@ class FillEventsManager:
             for raw in batch:
                 raw.setdefault("raw", [])
                 try:
+                    _validate_required_fill_event_payload(raw)
                     event = FillEvent.from_dict(raw)
                 except ValueError as exc:
-                    logger.warning(
-                        "[fills] skipping malformed event %s (error=%s)",
-                        raw.get("id"),
-                        exc,
-                    )
-                    continue
+                    raise ValueError(
+                        "[fills] malformed canonical event "
+                        f"exchange={self.exchange} event_id={raw.get('id')!r}: {exc}"
+                    ) from exc
                 source_key = tuple(event.source_ids) if event.source_ids else tuple()
                 replaced_ids: set[str] = set()
                 if source_key and source_key in source_ids_index:
