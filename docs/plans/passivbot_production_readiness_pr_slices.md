@@ -41,7 +41,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-SEC-002 | Make Telegram bridge auth fail-closed | queued | M | PB-SEC-001 |
 | PB-OPS-001 | Lock monitor relay to safe local-only defaults | queued | M | none |
 | PB-OPS-002 | Lock fill-events dashboard to safe local-only defaults | queued | S | none |
 | PB-SEC-003 | Redact custom endpoint headers and fail closed on invalid live config | queued | M | none |
@@ -79,7 +78,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - `git check-ignore -v .omx monitor monitor/fake .omx/logs/omx-2026-04-11.jsonl`
 
 ## PB-SEC-002 — Make Telegram bridge auth fail-closed
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `fix/pb-sec-002-telegram-auth`
 - **Target PR size:** medium
 - **Depends on:** `PB-SEC-001`

@@ -161,6 +161,39 @@ Passivbot uses Python's logging module throughout the bot, backtester, and suppo
 
 Running several Passivbot instances against the same exchange on one machine is supported. Each process shares the same on-disk OHLCV cache, and the candlestick manager now uses short-lived, self-healing locks with automatic stale cleanup so that one stalled process cannot block the rest. No manual deletion of lock files is required; the bot removes stale locks on startup and logs whenever a lock acquisition times out.
 
+### OMX Telegram Connector (Windows-friendly)
+
+Passivbot includes an OMX Telegram bridge at `src/omx_telegram_progress_bridge.py` for session progress reporting and operator replies.
+
+- Start from `configs/examples/omx.telegram.sample.omx-config.json` and copy the `notifications.telegram` block into your own OMX config file (default lookup path: `~/.codex/.omx-config.json`). For OMX runtime integration, keep `notifications.custom_cli_command.enabled: true` so OMX emits session events into the bridge.
+- The bridge supports outbound progress updates plus inbound commands such as `/status`, `/continue`, `/pause`, `/stop`, `/latest`, `/files`, `/queue`, `/mute`, and direct replies to bridge messages.
+- On Windows, the recommended control path is the built-in Codex handoff flow rather than tmux. Incoming Telegram replies can be consumed into per-session handoff files under `.omx/state/sessions/<session_id>/`.
+- When `codexConsumerEnabled` is true and `codexInputPath` is left blank, the watcher now writes to the session-default path `.omx/state/sessions/<session_id>/telegram-codex-input.json` automatically.
+- The bridge uses the `notifications.telegram` credentials/settings, but for bridge-only operation the native OMX `notifications.telegram.enabled` flag may remain `false` to avoid duplicate non-bridge Telegram alerts.
+
+Production checklist:
+
+- Restrict access with `allowedChatIds` and at least one of `allowedUserIds` or `allowedUsernames`.
+- When `pollUpdatesEnabled`, `repliesEnabled`, `dispatchInboxEnabled`, or `codexConsumerEnabled` are enabled, the bridge now fails closed at startup unless at least one per-user allowlist (`allowedUserIds` or `allowedUsernames`) is configured.
+- Keep `notifications.custom_cli_command.enabled: true`; that is what activates the bridge on OMX session events.
+- Keep `pollUpdatesEnabled: true` so inbound commands and operator replies are consumed continuously.
+- Prefer `codexConsumerEnabled: true` on Windows so replies become file-backed Codex handoffs automatically.
+- Use direct Telegram replies to bridge messages or `/reply ...` for free-form operator instructions.
+- Use inline controls or `/continue`, `/pause`, `/stop` for queueable operator commands.
+- Run `--audit-connector` for a session before relying on it after manual intervention or recovery.
+- Treat the bridge as operator coordination only: it does not place exchange orders directly.
+
+Useful commands:
+
+```powershell
+python src/omx_telegram_progress_bridge.py --print-sample-config --session-id <session_id> --project-path .
+python src/omx_telegram_progress_bridge.py --reset-connector-state --session-id <session_id> --project-path .
+python src/omx_telegram_progress_bridge.py --event session-start --session-id <session_id> --project-path .
+python src/omx_telegram_progress_bridge.py --audit-connector --session-id <session_id> --project-path .
+```
+
+The bridge is file-backed by design: it does not place exchange orders directly and it does not assume a live tmux control plane on Windows.
+
 ## Jupyter Lab
 
 Jupyter lab needs to be run in the same virtual environment as the bot. Activate venv (see installation instructions above, step 3), and launch Jupyter lab from the Passivbot root dir with:

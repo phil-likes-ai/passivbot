@@ -1,0 +1,27 @@
+{
+  "notifications": {
+    "telegram": {
+      "botToken": "123456:replace-me",
+      "chatId": "123456789",
+      "allowedChatIds": [
+        "123456789"
+      ],
+      "allowedUserIds": [
+        "123456789"
+      ],
+      "allowedUsernames": [
+        "your_telegram_username"
+      ],
+      "repliesEnabled": true,
+      "pollUpdatesEnabled": true,
+      "pollLimit": 20,
+      "pollTimeoutSeconds": 20,
+      "pollIntervalSeconds": 5,
+      "dispatchInboxEnabled": false,
+      "dispatchLimit": 1,
+      "codexConsumerEnabled": true,
+      "codexConsumerLimit": 5,
+      "codexInputPath": ""
+    }
+  }
+}
