@@ -45,7 +45,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 | PB-REL-003 | Harden candlestick critical fetch/freshness paths | blocked | L | PB-REL-001 |
 | PB-REL-004 | Harden fill-events malformed payload handling | blocked | M | PB-REL-001 |
 | PB-XCH-001 | Add exchange adapter parity coverage for required-input behavior | blocked | M | PB-REL-003, PB-REL-004 |
-| PB-OPS-003 | Make `sync_tar.py` extraction traversal-safe | queued | S | none |
 | PB-CI-001 | Add secret/dependency/grep gates to CI | blocked | M | PB-SEC-001, PB-SEC-003 |
 | PB-ARCH-001 | Reconcile stale planning docs and mark archived plans | queued | S | none |
 | PB-DOC-001 | Define hardened production deployment profile and signoff checklist | deferred | M | PB-SEC-002, PB-OPS-001, PB-CI-001 |
@@ -226,7 +225,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - targeted exchange pytest bundle
 
 ## PB-OPS-003 — Make `sync_tar.py` extraction traversal-safe
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `fix/pb-ops-003-sync-tar-safe-extract`
 - **Target PR size:** small
 - **In scope files:** `sync_tar.py`, `tests/test_sync_tar.py`

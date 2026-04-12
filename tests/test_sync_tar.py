@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import io
+import tarfile
 from pathlib import Path
+
+import pytest
 
 import sync_tar
 
@@ -111,3 +115,44 @@ def test_handle_push_archives_single_file_and_extracts_remotely(tmp_path, monkey
     assert len(scp_calls) == 1
     assert scp_calls[0][1] == "vpsopt3"
     assert scp_calls[0][2].startswith("/root/passivbot/configs/")
+
+
+def _write_tar(path: Path, members: list[tuple[tarfile.TarInfo, bytes]]) -> None:
+    with tarfile.open(path, "w:gz") as tf:
+        for member, data in members:
+            tf.addfile(member, io.BytesIO(data))
+
+
+def _file_member(name: str, payload: bytes) -> tuple[tarfile.TarInfo, bytes]:
+    member = tarfile.TarInfo(name=name)
+    member.size = len(payload)
+    return member, payload
+
+
+def test_extract_archive_rejects_parent_traversal_member(tmp_path):
+    archive_path = tmp_path / "bad.tar.gz"
+    _write_tar(archive_path, [_file_member("../evil.txt", b"oops")])
+
+    with pytest.raises(ValueError, match="Unsafe archive member path: ../evil.txt"):
+        sync_tar.extract_archive(archive_path, tmp_path / "out")
+
+
+def test_extract_archive_rejects_symlink_member(tmp_path):
+    archive_path = tmp_path / "bad-link.tar.gz"
+    member = tarfile.TarInfo(name="link-out")
+    member.type = tarfile.SYMTYPE
+    member.linkname = "../outside.txt"
+    member.size = 0
+    _write_tar(archive_path, [(member, b"")])
+
+    with pytest.raises(ValueError, match="Unsafe archive link entry: link-out"):
+        sync_tar.extract_archive(archive_path, tmp_path / "out")
+
+
+def test_extract_archive_allows_safe_members(tmp_path):
+    archive_path = tmp_path / "safe.tar.gz"
+    _write_tar(archive_path, [_file_member("nested/file.txt", b"hello")])
+
+    sync_tar.extract_archive(archive_path, tmp_path / "out")
+
+    assert (tmp_path / "out" / "nested" / "file.txt").read_text(encoding="utf-8") == "hello"

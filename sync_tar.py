@@ -21,6 +21,7 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 
@@ -58,8 +59,13 @@ def _resolve_pull_destination(destination: str, remote_base: str) -> Path:
 
 
 def _build_remote_tar_cmd(remote_tmp: str, remote_dir: str, remote_base: str) -> str:
+    def _shell_quote_if_needed(text: str) -> str:
+        if re.fullmatch(r"[A-Za-z0-9_./-]+", text):
+            return text
+        return shlex.quote(text)
+
     quoted_tmp = shlex.quote(remote_tmp)
-    quoted_dir = shlex.quote(remote_dir)
+    quoted_dir = _shell_quote_if_needed(remote_dir)
     quoted_base = shlex.quote(remote_base)
     no_match_msg = shlex.quote(f"No remote matches found for pattern: {remote_base}")
     return (
@@ -82,6 +88,22 @@ def create_archive(source_path: Path, archive_path: Path) -> None:
     print("Archive created.")
 
 
+def _validated_archive_members(tf: tarfile.TarFile, destination: Path) -> list[tarfile.TarInfo]:
+    destination = destination.resolve()
+    members: list[tarfile.TarInfo] = []
+    for member in tf.getmembers():
+        member_path = PurePosixPath(member.name)
+        if member_path.is_absolute() or ".." in member_path.parts:
+            raise ValueError(f"Unsafe archive member path: {member.name}")
+        if member.islnk() or member.issym():
+            raise ValueError(f"Unsafe archive link entry: {member.name}")
+        resolved_target = (destination / Path(*member_path.parts)).resolve()
+        if resolved_target != destination and destination not in resolved_target.parents:
+            raise ValueError(f"Archive member escapes destination: {member.name}")
+        members.append(member)
+    return members
+
+
 def extract_archive(archive_path: Path, destination: Path) -> None:
     if not archive_path.is_file():
         raise FileNotFoundError(f"Archive not found: {archive_path}")
@@ -89,7 +111,11 @@ def extract_archive(archive_path: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     print(f"Extracting {archive_path} into {destination} ...")
     with tarfile.open(archive_path, "r:gz") as tf:
-        tf.extractall(destination)
+        tf.extractall(
+            destination,
+            members=_validated_archive_members(tf, destination),
+            filter="data",
+        )
     print("Extraction complete.")
 
 
@@ -160,8 +186,9 @@ def handle_pull(args: argparse.Namespace) -> None:
         raise ValueError("Remote host must be specified via --remote or within remote_source.")
 
     remote_path = remote_path.rstrip("/")
-    remote_dir = str(Path(remote_path).parent)
-    remote_base = Path(remote_path).name
+    remote_parts = PurePosixPath(remote_path)
+    remote_dir = str(remote_parts.parent)
+    remote_base = remote_parts.name
 
     archive_basename = f"{_safe_archive_component(remote_base)}_{_timestamp()}.tar.gz"
     remote_tmp = f"/tmp/{archive_basename}"
