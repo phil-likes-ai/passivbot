@@ -67,6 +67,22 @@ _REFRESH_STATE: Dict[str, Any] = {
 }
 _REFRESH_LOCK = threading.Lock()
 _REFRESH_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+_LOCAL_DASH_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _resolve_bind_host(host: str, *, allow_insecure_bind: bool) -> str:
+    normalized = str(host or "").strip().lower() or "127.0.0.1"
+    if normalized in _LOCAL_DASH_HOSTS:
+        return normalized
+    if allow_insecure_bind:
+        logging.warning(
+            "Starting fill events dashboard with insecure bind host=%s; the dashboard is unauthenticated and should stay on trusted local networking only",
+            host,
+        )
+        return normalized
+    raise ValueError(
+        f"refusing non-local fill-events dashboard bind host {host}; rerun with --allow-insecure-bind only if you intentionally want an unauthenticated public bind"
+    )
 
 
 def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
@@ -581,8 +597,15 @@ def build_cache_health_panel(summaries: List[Dict[str, Any]]) -> html.Div:
     return dbc.Row(cards)
 
 
-def serve_dash(accounts: Dict[str, Dict[str, Any]], default_days: int = 30, port: int = 8050) -> None:
+def serve_dash(
+    accounts: Dict[str, Dict[str, Any]],
+    default_days: int = 30,
+    port: int = 8050,
+    host: str = "127.0.0.1",
+    allow_insecure_bind: bool = False,
+) -> None:
     """Serve the Dash application."""
+    bind_host = _resolve_bind_host(host, allow_insecure_bind=allow_insecure_bind)
     _ensure_loaded(accounts)
     now = pd.Timestamp.utcnow()
     start_default = now - pd.Timedelta(days=default_days)
@@ -1115,7 +1138,7 @@ def serve_dash(accounts: Dict[str, Dict[str, Any]], default_days: int = 30, port
         raise PreventUpdate
 
     # Run server
-    logging.info(f"Starting dashboard on http://localhost:{port}")
+    logging.info("Starting dashboard on http://%s:%s", bind_host, port)
     logging.info("Press Ctrl+C to stop the server")
 
     def force_exit():
@@ -1132,7 +1155,7 @@ def serve_dash(accounts: Dict[str, Dict[str, Any]], default_days: int = 30, port
     signal.signal(signal.SIGTERM, shutdown_handler)
 
     try:
-        app.run_server(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+        app.run_server(host=bind_host, port=port, debug=False, use_reloader=False)
     except SystemExit:
         pass
     except KeyboardInterrupt:
@@ -1141,7 +1164,7 @@ def serve_dash(accounts: Dict[str, Dict[str, Any]], default_days: int = 30, port
         force_exit()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fill events dashboard")
     parser.add_argument(
         "--config",
@@ -1181,7 +1204,17 @@ def parse_args() -> argparse.Namespace:
         default=8050,
         help="Port to run dashboard on (default: 8050)",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind host for the dashboard server (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--allow-insecure-bind",
+        action="store_true",
+        help="Allow binding the unauthenticated dashboard to a non-local interface such as 0.0.0.0.",
+    )
+    return parser.parse_args(argv)
 
 
 def main() -> None:
@@ -1192,7 +1225,13 @@ def main() -> None:
     if not accounts:
         logging.error("No accounts could be loaded. Check your --users argument and api-keys.json")
         sys.exit(1)
-    serve_dash(accounts, default_days=args.lookback_days, port=args.port)
+    serve_dash(
+        accounts,
+        default_days=args.lookback_days,
+        port=args.port,
+        host=args.host,
+        allow_insecure_bind=args.allow_insecure_bind,
+    )
 
 
 if __name__ == "__main__":

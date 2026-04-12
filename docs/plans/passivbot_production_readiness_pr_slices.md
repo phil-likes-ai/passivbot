@@ -41,7 +41,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-OPS-002 | Lock fill-events dashboard to safe local-only defaults | queued | S | none |
 | PB-SEC-003 | Redact custom endpoint headers and fail closed on invalid live config | queued | M | none |
 | PB-REL-001 | Remove false-success behavior from update prep cycle | queued | M | PB-SEC-001 |
 | PB-REL-002 | Harden warmup/mode-prep broad catches in `src/passivbot.py` | blocked | M | PB-REL-001 |
@@ -112,7 +111,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - `python -m pytest tests/test_monitor_relay.py tests/test_monitor_dev.py tests/test_monitor_web.py -q`
 
 ## PB-OPS-002 — Lock fill-events dashboard to safe local-only defaults
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `fix/pb-ops-002-fill-events-dash-bind`
 - **Target PR size:** small
 - **In scope files:** `src/tools/fill_events_dash.py`, dashboard tests if present or add focused test coverage/docs
