@@ -66,6 +66,15 @@ _BASE_EXCHANGE_TEMPLATE = {
 }
 
 DEFAULT_CONFIG_SEARCH_PATHS: Tuple[str, ...] = (os.path.join("configs", "custom_endpoints.json"),)
+_SENSITIVE_HEADER_TOKENS: Tuple[str, ...] = (
+    "authorization",
+    "api-key",
+    "apikey",
+    "secret",
+    "passphrase",
+    "token",
+    "cookie",
+)
 
 
 class CustomEndpointConfigError(RuntimeError):
@@ -310,6 +319,18 @@ def _build_resolved(exchange_id: str, payload: Mapping[str, object]) -> Resolved
 _CONFIG_CACHE: Optional[CustomEndpointConfig] = None
 _CONFIG_LOAD_PARAMS: Tuple[Optional[str], bool] = (None, True)
 _CONFIG_SOURCE_PATH: Optional[Path] = None
+_CONFIG_FAIL_ON_ERROR: bool = True
+
+
+def _redact_headers(headers: Mapping[str, str]) -> Dict[str, str]:
+    redacted: Dict[str, str] = {}
+    for key, value in headers.items():
+        normalized = str(key or "").strip().lower()
+        if any(token in normalized for token in _SENSITIVE_HEADER_TOKENS):
+            redacted[str(key)] = "<redacted>"
+        else:
+            redacted[str(key)] = str(value)
+    return redacted
 
 
 def configure_custom_endpoint_loader(
@@ -317,6 +338,7 @@ def configure_custom_endpoint_loader(
     *,
     autodiscover: bool = True,
     preloaded: Optional[CustomEndpointConfig] = None,
+    fail_on_error: bool = True,
 ) -> None:
     """
     Configure the loader to use a specific path or disable auto-discovery.
@@ -328,9 +350,14 @@ def configure_custom_endpoint_loader(
         autodiscover: Whether to search default locations when ``path`` is None.
         preloaded: Optional already-parsed configuration to reuse, avoiding
               an additional file read on next access.
+        fail_on_error: When ``True`` (default), invalid configurations raise
+              ``CustomEndpointConfigError`` instead of silently degrading to an
+              empty config. Set to ``False`` only for explicitly allowed
+              best-effort contexts.
     """
-    global _CONFIG_CACHE, _CONFIG_LOAD_PARAMS, _CONFIG_SOURCE_PATH
+    global _CONFIG_CACHE, _CONFIG_LOAD_PARAMS, _CONFIG_SOURCE_PATH, _CONFIG_FAIL_ON_ERROR
     _CONFIG_LOAD_PARAMS = (path, bool(autodiscover))
+    _CONFIG_FAIL_ON_ERROR = bool(fail_on_error)
     if preloaded is not None:
         _CONFIG_SOURCE_PATH = preloaded.source_path
     else:
@@ -342,8 +369,9 @@ def get_cached_custom_endpoint_config() -> CustomEndpointConfig:
     """
     Return the cached custom endpoint configuration, loading it on first use.
 
-    If loading fails due to parsing errors the function logs the issue and
-    returns an empty configuration to keep the application running.
+    Invalid configurations raise ``CustomEndpointConfigError`` by default so
+    live runs fail closed. Call ``configure_custom_endpoint_loader`` with
+    ``fail_on_error=False`` only for explicitly approved best-effort contexts.
     """
     global _CONFIG_CACHE
     if _CONFIG_CACHE is None:
@@ -364,6 +392,8 @@ def get_cached_custom_endpoint_config() -> CustomEndpointConfig:
                 _CONFIG_SOURCE_PATH = _CONFIG_CACHE.source_path
         except CustomEndpointConfigError as exc:
             logger.error("Failed to load custom endpoint config: %s", exc)
+            if _CONFIG_FAIL_ON_ERROR:
+                raise
             _CONFIG_CACHE = CustomEndpointConfig(
                 source_path=None,
                 defaults={},
@@ -433,7 +463,7 @@ def apply_rest_overrides_to_ccxt(
             logger.info(
                 "Custom endpoint headers for %s merged: %s",
                 override.exchange_id,
-                override.rest_extra_headers,
+                _redact_headers(override.rest_extra_headers),
             )
     except Exception as exc:
         logger.warning(

@@ -41,7 +41,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-SEC-003 | Redact custom endpoint headers and fail closed on invalid live config | queued | M | none |
 | PB-REL-001 | Remove false-success behavior from update prep cycle | queued | M | PB-SEC-001 |
 | PB-REL-002 | Harden warmup/mode-prep broad catches in `src/passivbot.py` | blocked | M | PB-REL-001 |
 | PB-REL-003 | Harden candlestick critical fetch/freshness paths | blocked | L | PB-REL-001 |
@@ -126,7 +125,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - targeted tests if added, otherwise manual arg parsing / startup verification
 
 ## PB-SEC-003 — Redact custom endpoint headers and fail closed on invalid live config
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `fix/pb-sec-003-endpoint-override-redaction`
 - **Target PR size:** medium
 - **In scope files:** `src/custom_endpoint_overrides.py`, `tests/test_custom_endpoints.py`

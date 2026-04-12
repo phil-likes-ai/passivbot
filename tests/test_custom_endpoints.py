@@ -4,6 +4,7 @@ import pytest
 
 from custom_endpoint_overrides import (
     CustomEndpointConfig,
+    CustomEndpointConfigError,
     ResolvedEndpointOverride,
     apply_rest_overrides_to_ccxt,
     configure_custom_endpoint_loader,
@@ -89,6 +90,31 @@ def test_apply_rest_overrides_to_ccxt_updates_urls_and_headers():
     assert exchange.headers["X-Test"] == "1"
 
 
+def test_apply_rest_overrides_to_ccxt_redacts_sensitive_header_logs(caplog):
+    override = ResolvedEndpointOverride(
+        exchange_id="binanceusdm",
+        rest_extra_headers={
+            "Authorization": "Bearer super-secret-token",
+            "X-Test": "1",
+        },
+    )
+
+    class DummyExchange:
+        def __init__(self):
+            self.urls = {"api": {}}
+            self.headers = {}
+
+    caplog.set_level("INFO")
+    exchange = DummyExchange()
+    apply_rest_overrides_to_ccxt(exchange, override)
+
+    assert exchange.headers["Authorization"] == "Bearer super-secret-token"
+    assert exchange.headers["X-Test"] == "1"
+    assert "Bearer super-secret-token" not in caplog.text
+    assert "<redacted>" in caplog.text
+    assert "X-Test" in caplog.text
+
+
 def test_apply_rest_overrides_handles_hostname_placeholder():
     override = ResolvedEndpointOverride(
         exchange_id="bybit",
@@ -118,6 +144,31 @@ def test_configure_loader_disables_autodiscovery():
     assert isinstance(config, CustomEndpointConfig)
     assert config.is_empty()
     assert resolve_custom_endpoint_override("binanceusdm") is None
+
+
+def test_get_cached_custom_endpoint_config_raises_on_invalid_config_by_default(tmp_path):
+    config_path = _write_config(tmp_path / "custom_endpoints.json", {"exchanges": []})
+
+    configure_custom_endpoint_loader(str(config_path), autodiscover=False, preloaded=None)
+
+    with pytest.raises(CustomEndpointConfigError, match="'exchanges' section must be an object"):
+        get_cached_custom_endpoint_config()
+
+
+def test_get_cached_custom_endpoint_config_can_explicitly_fallback_to_empty(tmp_path):
+    config_path = _write_config(tmp_path / "custom_endpoints.json", {"exchanges": []})
+
+    configure_custom_endpoint_loader(
+        str(config_path),
+        autodiscover=False,
+        preloaded=None,
+        fail_on_error=False,
+    )
+
+    config = get_cached_custom_endpoint_config()
+
+    assert isinstance(config, CustomEndpointConfig)
+    assert config.is_empty()
 
 
 def test_configure_loader_with_explicit_path(tmp_path):
