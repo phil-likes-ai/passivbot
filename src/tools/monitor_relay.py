@@ -17,6 +17,8 @@ if str(SRC_ROOT) not in sys.path:
 from logging_setup import configure_logging
 from monitor_relay import create_monitor_relay_app
 
+_LOCAL_BIND_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -64,12 +66,33 @@ def _parse_args() -> argparse.Namespace:
         default="INFO",
         help="Logging level for the relay process.",
     )
+    parser.add_argument(
+        "--allow-insecure-bind",
+        action="store_true",
+        help="Allow binding the unauthenticated relay to a non-local interface such as 0.0.0.0.",
+    )
     return parser.parse_args()
+
+
+def _validate_bind_host(host: str, *, allow_insecure_bind: bool) -> None:
+    normalized = str(host or "").strip().lower()
+    if normalized in _LOCAL_BIND_HOSTS:
+        return
+    if allow_insecure_bind:
+        logging.warning(
+            "[monitor-relay] insecure bind enabled for host=%s; relay endpoints are unauthenticated and should stay behind trusted local networking or an authenticated proxy",
+            host,
+        )
+        return
+    raise ValueError(
+        f"refusing non-local monitor relay bind host {host}; rerun with --allow-insecure-bind only if you intentionally want an unauthenticated public bind"
+    )
 
 
 def main() -> None:
     args = _parse_args()
     configure_logging(args.log_level.upper())
+    _validate_bind_host(args.host, allow_insecure_bind=args.allow_insecure_bind)
     app = create_monitor_relay_app(
         monitor_root=args.monitor_root,
         poll_interval_ms=args.poll_interval_ms,

@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from monitor_dev import _relay_launch_env, resolve_latest_log_file, wait_for_relay
+from monitor_dev import (
+    _relay_launch_env,
+    _validate_local_relay_host,
+    resolve_latest_log_file,
+    run_monitor_dev,
+    wait_for_relay,
+)
 from monitor_tui import MonitorTuiClient
 
 
@@ -114,3 +120,16 @@ def test_monitor_dev_tool_help_runs_without_import_errors():
     assert result.returncode == 0
     assert "--relay-url" in result.stdout
     assert "--log-file" in result.stdout
+
+
+def test_validate_local_relay_host_rejects_public_bind():
+    with pytest.raises(ValueError, match="non-local relay host 0.0.0.0"):
+        _validate_local_relay_host("0.0.0.0")
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_dev_refuses_public_auto_launch(monkeypatch):
+    monkeypatch.setattr("monitor_dev.relay_healthcheck", lambda relay_url: False)
+
+    with pytest.raises(ValueError, match="non-local relay host 0.0.0.0"):
+        await run_monitor_dev(relay_url="http://0.0.0.0:8765")

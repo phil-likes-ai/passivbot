@@ -6,6 +6,7 @@ import sys
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+from tools.monitor_relay import _validate_bind_host
 
 import monitor_relay
 from monitor_relay import (
@@ -17,6 +18,17 @@ from monitor_relay import (
     _handle_ws,
     create_monitor_relay_app,
 )
+
+
+def test_monitor_relay_tool_refuses_public_bind_without_explicit_flag():
+    with pytest.raises(
+        ValueError, match="refusing non-local monitor relay bind host 0.0.0.0"
+    ):
+        _validate_bind_host("0.0.0.0", allow_insecure_bind=False)
+
+
+def test_monitor_relay_tool_allows_public_bind_with_explicit_flag():
+    _validate_bind_host("0.0.0.0", allow_insecure_bind=True)
 
 
 def _write_json(path, payload):

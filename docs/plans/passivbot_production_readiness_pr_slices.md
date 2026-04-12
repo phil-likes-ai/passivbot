@@ -41,7 +41,6 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-OPS-001 | Lock monitor relay to safe local-only defaults | queued | M | none |
 | PB-OPS-002 | Lock fill-events dashboard to safe local-only defaults | queued | S | none |
 | PB-SEC-003 | Redact custom endpoint headers and fail closed on invalid live config | queued | M | none |
 | PB-REL-001 | Remove false-success behavior from update prep cycle | queued | M | PB-SEC-001 |
@@ -96,7 +95,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - `python -m pytest tests/test_omx_telegram_progress_bridge.py -q`
 
 ## PB-OPS-001 — Lock monitor relay to safe local-only defaults
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `fix/pb-ops-001-monitor-relay-local-only`
 - **Target PR size:** medium
 - **In scope files:** `src/tools/monitor_relay.py`, `src/monitor_relay.py`, `src/monitor_dev.py`, `src/monitor_web.py`, `tests/test_monitor_relay.py`, `tests/test_monitor_dev.py`, `tests/test_monitor_web.py`

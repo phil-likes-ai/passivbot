@@ -9,6 +9,7 @@ from typing import Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from monitor_dev import (
+    _validate_local_relay_host,
     launch_relay_subprocess,
     relay_healthcheck,
     stop_relay_subprocess,
@@ -64,10 +65,7 @@ async def run_monitor_web(
     if relay_healthcheck(relay_url):
         logging.info("[monitor-web] using existing relay at %s", relay_url)
     else:
-        if host not in {"127.0.0.1", "localhost", "0.0.0.0"}:
-            raise ValueError(
-                f"cannot auto-launch relay for non-local relay host {host}; start it manually or use a local relay URL"
-            )
+        _validate_local_relay_host(host)
         logging.info("[monitor-web] launching relay at %s", relay_url)
         relay_process = launch_relay_subprocess(
             repo_root=repo_root,

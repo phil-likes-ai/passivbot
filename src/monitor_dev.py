@@ -14,6 +14,8 @@ from urllib.request import urlopen
 
 from monitor_tui import MonitorTuiClient
 
+_LOCAL_RELAY_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
 
 def resolve_latest_log_file(*, logs_dir: str = "logs", explicit_log_file: Optional[str] = None) -> Optional[str]:
     if explicit_log_file:
@@ -57,6 +59,15 @@ def _read_relay_log_excerpt(relay_log_file: str, *, max_lines: int = 20) -> str:
         return ""
     excerpt = "\n".join(lines[-max_lines:])
     return excerpt.strip()
+
+
+def _validate_local_relay_host(host: str) -> str:
+    normalized = str(host or "").strip().lower()
+    if normalized in _LOCAL_RELAY_HOSTS:
+        return normalized
+    raise ValueError(
+        f"cannot auto-launch relay for non-local relay host {host}; use 127.0.0.1/localhost or start the relay manually"
+    )
 
 
 def launch_relay_subprocess(
@@ -162,10 +173,7 @@ async def run_monitor_dev(
     if relay_healthcheck(relay_url):
         logging.info("[monitor-dev] using existing relay at %s", relay_url)
     else:
-        if host not in {"127.0.0.1", "localhost", "0.0.0.0"}:
-            raise ValueError(
-                f"cannot auto-launch relay for non-local relay host {host}; start it manually or use a local relay URL"
-            )
+        _validate_local_relay_host(host)
         logging.info("[monitor-dev] launching relay at %s", relay_url)
         relay_process = launch_relay_subprocess(
             repo_root=repo_root,

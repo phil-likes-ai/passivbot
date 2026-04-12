@@ -54,3 +54,11 @@ def test_monitor_web_tool_help_runs_without_import_errors():
     assert result.returncode == 0
     assert "--relay-url" in result.stdout
     assert "--open-browser" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_web_refuses_public_auto_launch(monkeypatch):
+    monkeypatch.setattr("monitor_web.relay_healthcheck", lambda relay_url: False)
+
+    with pytest.raises(ValueError, match="non-local relay host 0.0.0.0"):
+        await run_monitor_web(relay_url="http://0.0.0.0:8765")
