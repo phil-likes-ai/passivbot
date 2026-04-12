@@ -684,34 +684,32 @@ class HyperliquidBot(CCXTBot):
         Adds Hyperliquid-specific vault address handling.
         Calls are made sequentially with a small delay to avoid rate-limit bursts.
         """
-        for symbol in symbols:
+        for i, symbol in enumerate(symbols):
             to_print = ""
+            leverage = self._calc_leverage_for_symbol(symbol)
+            margin_mode = self._get_margin_mode_for_symbol(symbol)
+
+            params = {"leverage": leverage}
+            if self.user_info["is_vault"]:
+                params["vaultAddress"] = self.user_info["wallet_address"]
+
             try:
-                leverage = self._calc_leverage_for_symbol(symbol)
-                margin_mode = self._get_margin_mode_for_symbol(symbol)
-
-                params = {"leverage": leverage}
-                if self.user_info["is_vault"]:
-                    params["vaultAddress"] = self.user_info["wallet_address"]
-
-                try:
-                    res = await self.cca.set_margin_mode(
-                        margin_mode, symbol=symbol, params=params
-                    )
-                    to_print = (
-                        f"margin={format_exchange_config_response(res)} ({margin_mode})"
-                    )
-                except Exception as e:
-                    if '"code":"59107"' in str(e):
-                        to_print = f"margin=ok (unchanged, {margin_mode})"
-                    else:
-                        logging.error(f"{symbol} error setting {margin_mode} mode {e}")
+                res = await self.cca.set_margin_mode(margin_mode, symbol=symbol, params=params)
             except Exception as e:
-                logging.error(f"{symbol}: error setting margin mode and leverage {e}")
+                if '"code":"59107"' in str(e):
+                    logging.debug("%s: margin mode already set (unchanged, %s)", symbol, margin_mode)
+                    to_print = f"margin=ok (unchanged, {margin_mode})"
+                else:
+                    raise RuntimeError(
+                        f"{self.exchange}: set_margin_mode failed for {symbol} ({margin_mode})"
+                    ) from e
+            else:
+                to_print = f"margin={format_exchange_config_response(res)} ({margin_mode})"
             if to_print:
                 logging.info(f"{symbol}: {to_print}")
             # Small delay between margin-mode API calls to avoid rate-limit bursts
-            await asyncio.sleep(0.2)
+            if i < len(symbols) - 1:
+                await asyncio.sleep(0.2)
 
     async def update_exchange_config(self):
         pass

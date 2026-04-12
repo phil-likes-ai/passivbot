@@ -42,7 +42,7 @@ Historical/supporting docs may add context, but they do not override this queue.
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
 | PB-REL-004 | Harden fill-events malformed payload handling | complete | M | PB-REL-001 |
-| PB-XCH-001 | Add exchange adapter parity coverage for required-input behavior | queued | M | PB-REL-003, PB-REL-004 |
+| PB-XCH-001 | Add exchange adapter parity coverage for required-input behavior | complete | M | PB-REL-003, PB-REL-004 |
 | PB-CI-001 | Add secret/dependency/grep gates to CI | complete | M | PB-SEC-001, PB-SEC-003 |
 | PB-DOC-001 | Define hardened production deployment profile and signoff checklist | deferred | M | PB-SEC-002, PB-OPS-001, PB-CI-001 |
 
@@ -206,7 +206,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - grep audit on touched files
 
 ## PB-XCH-001 — Add exchange adapter parity coverage for required-input behavior
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `test/pb-xch-001-adapter-parity`
 - **Target PR size:** medium
 - **Depends on:** `PB-REL-003`, `PB-REL-004`
