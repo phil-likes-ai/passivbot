@@ -19,9 +19,11 @@ Use these together when executing this backlog:
 - `.sisyphus/drafts/passivbot-remaining-work-breakdown.md`
 - `.sisyphus/drafts/passivbot-final-wave-readiness-matrix.md`
 
-Treat this plan as stale until reconciled with the backlog below:
+Treat these documents as archived historical context, not active execution plans:
 
 - `.sisyphus/plans/passivbot-unified-modernization-overhaul-plan.md`
+- `.sisyphus/plans/passivbot-modernization-plan.md`
+- `.sisyphus/drafts/passivbot-final-completion-evidence.md`
 
 ## Execution rules
 
@@ -308,16 +310,20 @@ Treat this plan as stale until reconciled with the backlog below:
 
 **Files / areas**
 - `.sisyphus/plans/passivbot-unified-modernization-overhaul-plan.md`
+- `.sisyphus/plans/passivbot-modernization-plan.md`
 - this file
 - `.sisyphus/drafts/passivbot-remaining-work-breakdown.md`
+- `.sisyphus/drafts/passivbot-final-completion-evidence.md`
 
 **Tasks**
 - Mark stale/optimistic plan artifacts clearly.
 - Point active work to one current backlog.
+- Update queue-ready statuses after satisfied dependencies land.
 - Keep phase completion status aligned with actual code/test evidence.
 
 **Acceptance criteria**
-- No doc claims Phases 1 to 5 are complete unless evidence exists.
+- No doc claims broad completion unless evidence exists.
+- The canonical PR queue reflects which slices are actually ready to run now.
 
 **Verification**
 - Human review of plan consistency.

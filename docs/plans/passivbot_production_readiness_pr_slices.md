@@ -41,12 +41,11 @@ Historical/supporting docs may add context, but they do not override this queue.
 
 | ID | Title | Status | Size | Depends on |
 |---|---|---|---|---|
-| PB-REL-002 | Harden warmup/mode-prep broad catches in `src/passivbot.py` | blocked | M | PB-REL-001 |
-| PB-REL-003 | Harden candlestick critical fetch/freshness paths | blocked | L | PB-REL-001 |
-| PB-REL-004 | Harden fill-events malformed payload handling | blocked | M | PB-REL-001 |
+| PB-REL-002 | Harden warmup/mode-prep broad catches in `src/passivbot.py` | queued | M | PB-REL-001 |
+| PB-REL-003 | Harden candlestick critical fetch/freshness paths | queued | L | PB-REL-001 |
+| PB-REL-004 | Harden fill-events malformed payload handling | queued | M | PB-REL-001 |
 | PB-XCH-001 | Add exchange adapter parity coverage for required-input behavior | blocked | M | PB-REL-003, PB-REL-004 |
-| PB-CI-001 | Add secret/dependency/grep gates to CI | blocked | M | PB-SEC-001, PB-SEC-003 |
-| PB-ARCH-001 | Reconcile stale planning docs and mark archived plans | queued | S | none |
+| PB-CI-001 | Add secret/dependency/grep gates to CI | queued | M | PB-SEC-001, PB-SEC-003 |
 | PB-DOC-001 | Define hardened production deployment profile and signoff checklist | deferred | M | PB-SEC-002, PB-OPS-001, PB-CI-001 |
 
 ---
@@ -158,7 +157,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - grep audit on touched paths: `rg -n "except Exception|except:|return_exceptions=True|\.get\([^\n]*,\s*(0|0\.0|None|False|\{\}|\[\])\)" src/passivbot.py tests`
 
 ## PB-REL-002 — Harden warmup/mode-prep broad catches in `src/passivbot.py`
-- **Status:** blocked
+- **Status:** queued
 - **Suggested branch:** `fix/pb-rel-002-passivbot-warmup-hardening`
 - **Target PR size:** medium
 - **Depends on:** `PB-REL-001`
@@ -175,7 +174,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - grep audit on touched files
 
 ## PB-REL-003 — Harden candlestick critical fetch/freshness paths
-- **Status:** blocked
+- **Status:** queued
 - **Suggested branch:** `fix/pb-rel-003-candlestick-fail-loud`
 - **Target PR size:** large
 - **Depends on:** `PB-REL-001`
@@ -192,7 +191,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - plus any newly added focused suites
 
 ## PB-REL-004 — Harden fill-events malformed payload handling
-- **Status:** blocked
+- **Status:** queued
 - **Suggested branch:** `fix/pb-rel-004-fill-events-fail-loud`
 - **Target PR size:** medium
 - **Depends on:** `PB-REL-001`
@@ -239,7 +238,7 @@ Historical/supporting docs may add context, but they do not override this queue.
   - `python -m pytest tests/test_sync_tar.py -q`
 
 ## PB-CI-001 — Add secret/dependency/grep gates to CI
-- **Status:** blocked
+- **Status:** queued
 - **Suggested branch:** `ci/pb-ci-001-security-gates`
 - **Target PR size:** medium
 - **Depends on:** `PB-SEC-001`, `PB-SEC-003`
@@ -256,10 +255,10 @@ Historical/supporting docs may add context, but they do not override this queue.
   - CI dry run / workflow validation
 
 ## PB-ARCH-001 — Reconcile stale planning docs and mark archived plans
-- **Status:** queued
+- **Status:** complete
 - **Suggested branch:** `docs/pb-arch-001-plan-reconciliation`
 - **Target PR size:** small
-- **In scope files:** `docs/plans/passivbot_production_readiness_remediation_backlog.md`, this queue, `.sisyphus/plans/passivbot-unified-modernization-overhaul-plan.md`, `.sisyphus/drafts/passivbot-remaining-work-breakdown.md`, `.sisyphus/drafts/passivbot-final-wave-readiness-matrix.md`
+- **In scope files:** `docs/plans/passivbot_production_readiness_remediation_backlog.md`, this queue, `.sisyphus/plans/passivbot-unified-modernization-overhaul-plan.md`, `.sisyphus/plans/passivbot-modernization-plan.md`, `.sisyphus/drafts/passivbot-remaining-work-breakdown.md`, `.sisyphus/drafts/passivbot-final-wave-readiness-matrix.md`, `.sisyphus/drafts/passivbot-final-completion-evidence.md`
 - **Out of scope:** implementation behavior changes
 - **Tasks:**
   - mark stale plan artifacts as archived/historical
