@@ -161,7 +161,7 @@ def load_user_info(user: str, api_keys_path="api-keys.json") -> dict:
     if api_keys_path is None:
         api_keys_path = "api-keys.json"
     try:
-        with open(api_keys_path) as f:
+        with open(api_keys_path, encoding="utf-8-sig") as f:
             api_keys = json.load(f)
     except Exception as e:
         raise Exception(f"error loading api keys file {api_keys_path} {e}")

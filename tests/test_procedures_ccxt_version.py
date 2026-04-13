@@ -30,3 +30,16 @@ def test_load_ccxt_version_falls_back_to_requirements_file(tmp_path, monkeypatch
     monkeypatch.setattr(procedures, "__file__", str(src_dir / "procedures.py"))
 
     assert procedures.load_ccxt_version() == "4.5.99"
+
+
+def test_load_user_info_accepts_utf8_bom(tmp_path):
+    api_keys = tmp_path / "api-keys.json"
+    api_keys.write_text(
+        '\ufeff{"fake_hsl_runner":{"exchange":"fake","quote":"USDT"}}',
+        encoding="utf-8",
+    )
+
+    result = procedures.load_user_info("fake_hsl_runner", api_keys_path=str(api_keys))
+
+    assert result["exchange"] == "fake"
+    assert result["quote"] == "USDT"
