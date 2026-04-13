@@ -6256,6 +6256,17 @@ def setup_bot(config):
     return bot
 
 
+async def preload_runtime_markets(user_info: dict, *, verbose: bool = True) -> dict:
+    """Warm market metadata for runtime startup when the exchange uses CCXT markets."""
+    exchange = str(user_info["exchange"]).lower()
+    if exchange == "fake":
+        logging.info(
+            "Skipping preflight market warmup for fake exchange; FakeBot loads scenario markets during startup."
+        )
+        return {}
+    return await load_markets(exchange, verbose=verbose, quote=user_info.get("quote"))
+
+
 async def main():
     """Entry point: parse CLI args, load config, and launch the bot lifecycle."""
     pb_runtime.register_signal_handlers()
@@ -6421,7 +6432,7 @@ async def main():
     # Reconfigure logging with exchange prefix now that we know the exchange
     exchange_prefix = user_info["exchange"]
     configure_logging(debug=effective_log_level, prefix=exchange_prefix, **log_file_settings)
-    await load_markets(user_info["exchange"], verbose=True)
+    await preload_runtime_markets(user_info, verbose=True)
 
     config = parse_overrides(config, verbose=True)
     cooldown_secs = 60

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -124,6 +125,30 @@ def test_setup_bot_fake_uses_fake_bot():
             result = setup_bot(config)
             mock_fake_bot.assert_called_once_with(config)
             assert result == mock_bot
+
+
+@pytest.mark.asyncio
+async def test_preload_runtime_markets_skips_ccxt_for_fake(monkeypatch, caplog):
+    from passivbot import preload_runtime_markets
+
+    called = False
+
+    async def _load_markets(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return {"unexpected": True}
+
+    monkeypatch.setattr("passivbot.load_markets", _load_markets)
+    caplog.set_level(logging.INFO)
+
+    result = await preload_runtime_markets({"exchange": "fake", "quote": "USDT"}, verbose=True)
+
+    assert result == {}
+    assert called is False
+    assert any(
+        "Skipping preflight market warmup for fake exchange" in record.message
+        for record in caplog.records
+    )
 
 
 def test_fake_ccxt_client_builds_replay_timeline_from_file(tmp_path):
