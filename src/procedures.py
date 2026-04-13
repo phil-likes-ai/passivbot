@@ -4,6 +4,7 @@ import logging
 import os
 import traceback
 import asyncio
+from importlib import metadata as importlib_metadata
 from datetime import datetime, timezone
 from time import time
 import numpy as np
@@ -541,6 +542,16 @@ def assert_correct_ccxt_version(version=None, ccxt=None):
 
 
 def load_ccxt_version():
+    try:
+        requirements = importlib_metadata.distribution("passivbot").requires or []
+        for requirement in requirements:
+            line = requirement.strip()
+            if not line.lower().startswith("ccxt"):
+                continue
+            if "==" in line:
+                return line.split("==", 1)[1].split(";", 1)[0].strip()
+    except Exception as e:
+        logging.debug("failed to load ccxt version from package metadata %s", e)
     try:
         # Get the directory of the current script
         script_dir = os.path.dirname(os.path.abspath(__file__))
