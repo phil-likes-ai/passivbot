@@ -1,6 +1,8 @@
 # Railway
 
 Railway should be treated as a thin deployment target for the canonical live container, not as a separate Passivbot runtime.
+For the supported real-money posture, pair this guide with
+[`docs/production_deployment_profile.md`](../production_deployment_profile.md).
 
 ## Recommended Approach
 
@@ -49,4 +51,6 @@ Useful for demos and simple deployments.
 - managed secrets
 - persistent volume
 
-This is the safer mode for serious live use.
+This is the safer mode for serious live use, but it is still expected to follow the same production
+controls for secret handling, local-only/authenticated operator surfaces, and rollout/rollback
+signoff.

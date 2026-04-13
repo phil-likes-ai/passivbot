@@ -59,11 +59,13 @@ def _make_bot_for_logging():
 
 
 class TestGetRealizedPnlCumsumStats:
-    def test_no_manager_returns_zeros(self):
+    def test_no_manager_raises(self):
         bot = object.__new__(Passivbot)
         bot._pnls_manager = None
-        result = bot._get_realized_pnl_cumsum_stats()
-        assert result == {"max": 0.0, "last": 0.0}
+        with pytest.raises(
+            RuntimeError, match="FillEventsManager unavailable for realized pnl cumsum stats"
+        ):
+            bot._get_realized_pnl_cumsum_stats()
 
     def test_empty_events_returns_zeros(self):
         bot = _make_bot_with_events([])
@@ -141,6 +143,14 @@ class TestGetRealizedPnlCumsumStats:
 
         assert result["max"] == pytest.approx(100.0)
         assert result["last"] == pytest.approx(30.0)
+
+
+class TestEquityHardStopRealizedPnlNow:
+    def test_no_manager_returns_zero(self):
+        bot = object.__new__(Passivbot)
+        bot._pnls_manager = None
+
+        assert bot._equity_hard_stop_realized_pnl_now() == 0.0
 
 
 # ---------------------------------------------------------------------------

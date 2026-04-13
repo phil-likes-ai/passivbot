@@ -2,17 +2,17 @@ import logging
 import sys
 import types
 from importlib import import_module
-
-
-stub = sys.modules.get("passivbot_rust")
-if stub is None:
-    stub = types.ModuleType("passivbot_rust")
-    sys.modules["passivbot_rust"] = stub
-setattr(stub, "calc_pnl_long", lambda entry, close, qty, c_mult: 11.0)
-setattr(stub, "calc_pnl_short", lambda entry, close, qty, c_mult: -7.0)
-setattr(stub, "calc_order_price_diff", lambda side, order_price, market_price: 0.123)
+from types import SimpleNamespace
 
 pb_utils = import_module("passivbot_utils")
+
+
+def _fake_pbr():
+    return SimpleNamespace(
+        calc_pnl_long=lambda entry, close, qty, c_mult: 11.0,
+        calc_pnl_short=lambda entry, close, qty, c_mult: -7.0,
+        calc_order_price_diff=lambda side, order_price, market_price: 0.123,
+    )
 
 
 def test_clip_by_timestamp_slices_sorted_rows():
@@ -21,13 +21,15 @@ def test_clip_by_timestamp_slices_sorted_rows():
     assert pb_utils.clip_by_timestamp(rows, 15, 25) == [{"timestamp": 20}]
 
 
-def test_calc_pnl_delegates_by_side():
+def test_calc_pnl_delegates_by_side(monkeypatch):
+    monkeypatch.setattr(pb_utils, "_get_pbr", _fake_pbr)
     assert pb_utils.calc_pnl("long", 1, 2, 3, False, 1.0) == 11.0
     assert pb_utils.calc_pnl("short", 1, 2, 3, False, 1.0) == -7.0
     assert pb_utils.calc_pnl(None, 1, 2, 3, False, 1.0) == 11.0
 
 
-def test_order_market_diff_delegates_to_rust_helper():
+def test_order_market_diff_delegates_to_rust_helper(monkeypatch):
+    monkeypatch.setattr(pb_utils, "_get_pbr", _fake_pbr)
     assert pb_utils.order_market_diff("buy", 100.0, 101.0) == 0.123
 
 

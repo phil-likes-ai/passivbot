@@ -2,6 +2,9 @@
 
 Passivbot now has a canonical live-container contract built around `Dockerfile_live` and `container/entrypoint.sh`.
 
+For the supported real-money deployment posture, read
+[`production_deployment_profile.md`](production_deployment_profile.md) together with this file.
+
 The container startup path uses:
 
 - the installed `passivbot` CLI
@@ -11,6 +14,8 @@ The container startup path uses:
 - Passivbot's canonical `logging.*` config for file persistence
 
 This is the intended base for Docker, Docker Compose, and hosted platforms such as Railway.
+The production profile adds the required secret, monitoring, operator-surface, rollout, and
+rollback controls around that base contract.
 
 ## Live Image
 

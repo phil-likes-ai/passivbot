@@ -93,7 +93,15 @@ class BitgetBot(CCXTBot):
 
     def _get_position_side_for_order(self, order: dict) -> str:
         """Bitget provides posSide in info."""
-        return order.get("info", {}).get("posSide", "long").lower()
+        info = order.get("info", {})
+        if not isinstance(info, dict) or "posSide" not in info:
+            raise KeyError(f"{self.exchange}: missing posSide in open-order payload")
+        position_side = str(info["posSide"]).lower()
+        if position_side not in {"long", "short"}:
+            raise ValueError(
+                f"{self.exchange}: invalid posSide in open-order payload: {info['posSide']!r}"
+            )
+        return position_side
 
     def get_symbol_id(self, symbol):
         """Return the exchange-native identifier for `symbol`, caching defaults."""
@@ -148,9 +156,33 @@ class BitgetBot(CCXTBot):
         """Bitget: use CCXT unified fields (contracts, entryPrice, side)."""
         fetched = await self.cca.fetch_positions()
         for elm in fetched:
-            elm["position_side"] = elm["side"]
-            elm["size"] = elm["contracts"]
-            elm["price"] = elm["entryPrice"]
+            side_raw = elm.get("side")
+            if side_raw is None:
+                raise KeyError(
+                    f"{self.exchange}: missing side in position payload for {elm.get('symbol')}"
+                )
+            position_side = str(side_raw).lower()
+            if position_side not in {"long", "short"}:
+                raise ValueError(
+                    f"{self.exchange}: invalid side in position payload for {elm.get('symbol')}: {side_raw!r}"
+                )
+            contracts = self._coerce_required_numeric_value(
+                elm["contracts"],
+                field="contracts",
+                symbol=elm.get("symbol"),
+                allow_zero=True,
+                payload_kind="position payload",
+            )
+            entry_price = self._coerce_required_numeric_value(
+                elm["entryPrice"],
+                field="entryPrice",
+                symbol=elm.get("symbol"),
+                allow_zero=contracts == 0.0,
+                payload_kind="position payload",
+            )
+            elm["position_side"] = position_side
+            elm["size"] = contracts
+            elm["price"] = entry_price
             margin_mode = self._extract_live_margin_mode(elm)
             if margin_mode is not None:
                 elm["margin_mode"] = margin_mode
@@ -165,8 +197,26 @@ class BitgetBot(CCXTBot):
             and "unionTotalMargin" in balance_info
             and balance_info["assetMode"] == "union"
         ):
-            return float(balance_info["unionTotalMargin"]) - float(balance_info["unrealizedPL"])
-        return float(balance_info["available"])
+            return self._coerce_required_numeric_value(
+                balance_info["unionTotalMargin"],
+                field="unionTotalMargin",
+                symbol=self.quote,
+                allow_zero=True,
+                payload_kind="balance payload",
+            ) - self._coerce_required_numeric_value(
+                balance_info["unrealizedPL"],
+                field="unrealizedPL",
+                symbol=self.quote,
+                allow_zero=True,
+                payload_kind="balance payload",
+            )
+        return self._coerce_required_numeric_value(
+            balance_info["available"],
+            field="available",
+            symbol=self.quote,
+            allow_zero=True,
+            payload_kind="balance payload",
+        )
 
     # ═══════════════════ BITGET-SPECIFIC METHODS ═══════════════════
 

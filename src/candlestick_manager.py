@@ -50,6 +50,7 @@ import candlestick_manager_date_utils as cm_date_utils
 import candlestick_manager_disk_utils as cm_disk_utils
 import candlestick_manager_coverage_utils as cm_coverage_utils
 import candlestick_manager_gap_utils as cm_gap_utils
+import candlestick_manager_gap_manager_utils as cm_gap_manager_utils
 import candlestick_manager_ccxt_utils as cm_ccxt_utils
 import candlestick_manager_misc_utils as cm_misc_utils
 import candlestick_manager_persist_utils as cm_persist_utils
@@ -156,8 +157,7 @@ EMA_SERIES_DTYPE = np.dtype(
 # ----- Utilities -----
 
 
-def _linear_interpolate(value0: float, value1: float, ratio: float) -> float:
-    return cm_synthesis_utils.linear_interpolate(value0, value1, ratio)
+_linear_interpolate = cm_synthesis_utils.linear_interpolate
 
 
 def ohlcv_xm_to_1m(candle: np.void, minutes: int) -> np.ndarray:
@@ -188,13 +188,10 @@ def synthesize_1m_from_higher_tf(candles: np.ndarray, tf_minutes: int) -> np.nda
     )
 
 
-def get_caller_name(depth: int = 2, logger: Optional[logging.Logger] = None) -> str:
-    """Return a more useful origin for debug logs."""
-    return cm_misc_utils.get_caller_name(depth=depth, logger=logger)
+get_caller_name = cm_misc_utils.get_caller_name
 
 
-def _utc_now_ms() -> int:
-    return cm_misc_utils.utc_now_ms()
+_utc_now_ms = cm_misc_utils.utc_now_ms
 
 
 def _floor_minute(ms: int) -> int:
@@ -205,9 +202,7 @@ def _ensure_dtype(a: np.ndarray) -> np.ndarray:
     return cm_core_utils.ensure_dtype(a, CANDLE_DTYPE)
 
 
-def _ts_index(a: np.ndarray) -> np.ndarray:
-    """Return sorted ts column as plain int64 array."""
-    return cm_core_utils.ts_index(a)
+_ts_index = cm_core_utils.ts_index
 
 
 def _sanitize_symbol(symbol: str) -> str:
@@ -220,27 +215,8 @@ def _sanitize_symbol(symbol: str) -> str:
     return sanitized
 
 
-def _quarantine_gateio_cache_if_stale(cache_base: str, cutoff_date: str) -> None:
-    """Move gateio cache to a timestamped backup if any shard predates cutoff_date."""
-    return cm_misc_utils.quarantine_gateio_cache_if_stale(cache_base, cutoff_date)
-
-
-def _looks_like_daily_shard_filename(name: str) -> bool:
-    return cm_misc_utils.looks_like_daily_shard_filename(name)
-
-
-def _quarantine_root_level_timeframe_debris(cache_base: str) -> int:
-    """
-    Quarantine invalid files found directly under exchange/timeframe roots.
-
-    Valid OHLCV layout is:
-    `{cache_base}/{exchange}/{timeframe}/{symbol}/YYYY-MM-DD.npy`
-
-    Any daily shard files or index.json files found directly under
-    `{cache_base}/{exchange}/{timeframe}` are debris from older/corrupt layouts and
-    should not remain in place.
-    """
-    return cm_misc_utils.quarantine_root_level_timeframe_debris(cache_base)
+_quarantine_gateio_cache_if_stale = cm_misc_utils.quarantine_gateio_cache_if_stale
+_quarantine_root_level_timeframe_debris = cm_misc_utils.quarantine_root_level_timeframe_debris
 
 
 # Parse timeframe string like '1m','5m','1h','1d' to milliseconds.
@@ -1384,6 +1360,7 @@ class CandlestickManager:
         if synth_plan is None:
             return 0
         first_synth_ts, prev_close = synth_plan
+        last_ts = int(arr[-1]["ts"])
 
         synth = cm_persist_utils.build_runtime_synthetic_gap(
             first_synth_ts,
@@ -1464,43 +1441,42 @@ class CandlestickManager:
     # ----- Known gap helpers -----
 
     def _get_known_gaps_enhanced(self, symbol: str) -> List[GapEntry]:
-        """Return known gaps as enhanced GapEntry objects with full metadata."""
-        idx = self._ensure_symbol_index(symbol)
-        gaps = idx.get("meta", {}).get("known_gaps", [])
-        now_ms = int(time.time() * 1000)
-        return cm_gap_utils.get_known_gaps_enhanced(
-            gaps,
-            now_ms=now_ms,
+        return cm_gap_manager_utils.get_known_gaps_enhanced(
+            self,
+            symbol,
+            now_ms=int(time.time() * 1000),
             gap_reason_auto=GAP_REASON_AUTO,
             gap_max_retries=_GAP_MAX_RETRIES,
         )
 
     def _get_known_gaps(self, symbol: str) -> List[Tuple[int, int]]:
-        """Return known gaps as simple (start_ts, end_ts) tuples for backward compatibility."""
-        return cm_gap_utils.simplify_known_gaps(self._get_known_gaps_enhanced(symbol))
-
-    def _save_known_gaps_enhanced(self, symbol: str, gaps: List[GapEntry]) -> None:
-        """Save gaps in enhanced format, merging overlapping ranges."""
-        merged = cm_gap_utils.merge_enhanced_gaps(
-            gaps, one_min_ms=ONE_MIN_MS, gap_reason_auto=GAP_REASON_AUTO
-        )
-        idx = self._ensure_symbol_index(symbol)
-        idx["meta"]["known_gaps"] = cm_gap_utils.serialize_known_gaps(
-            merged, gap_reason_auto=GAP_REASON_AUTO
-        )
-        self._index[symbol] = idx
-        self._save_index(symbol)
-
-    def _save_known_gaps(self, symbol: str, gaps: List[Tuple[int, int]]) -> None:
-        """Save gaps from simple tuples (backward compatibility wrapper)."""
-        now_ms = int(time.time() * 1000)
-        enhanced = cm_gap_utils.build_enhanced_gaps_from_tuples(
-            gaps,
-            now_ms=now_ms,
+        return cm_gap_manager_utils.get_known_gaps(
+            self,
+            symbol,
+            now_ms=int(time.time() * 1000),
             gap_reason_auto=GAP_REASON_AUTO,
             gap_max_retries=_GAP_MAX_RETRIES,
         )
-        self._save_known_gaps_enhanced(symbol, enhanced)
+
+    def _save_known_gaps_enhanced(self, symbol: str, gaps: List[GapEntry]) -> None:
+        return cm_gap_manager_utils.save_known_gaps_enhanced(
+            self,
+            symbol,
+            gaps,
+            one_min_ms=ONE_MIN_MS,
+            gap_reason_auto=GAP_REASON_AUTO,
+        )
+
+    def _save_known_gaps(self, symbol: str, gaps: List[Tuple[int, int]]) -> None:
+        return cm_gap_manager_utils.save_known_gaps(
+            self,
+            symbol,
+            gaps,
+            now_ms=int(time.time() * 1000),
+            gap_reason_auto=GAP_REASON_AUTO,
+            gap_max_retries=_GAP_MAX_RETRIES,
+            one_min_ms=ONE_MIN_MS,
+        )
 
     def _add_known_gap(
         self,
@@ -1526,38 +1502,19 @@ class CandlestickManager:
             retry_count: If specified, set retry_count directly instead of incrementing.
                          Useful for pre-inception gaps that should be immediately persistent.
         """
-        now_ms = int(time.time() * 1000)
-        gaps = self._get_known_gaps_enhanced(symbol)
-        gaps, updated, previous_retry_count, updated_gap = cm_gap_utils.add_known_gap(
-            gaps,
-            start_ts=int(start_ts),
-            end_ts=int(end_ts),
+        return cm_gap_manager_utils.add_known_gap(
+            self,
+            symbol,
+            start_ts,
+            end_ts,
             reason=reason,
             increment_retry=increment_retry,
             retry_count=retry_count,
-            now_ms=now_ms,
+            now_ms=int(time.time() * 1000),
             one_min_ms=ONE_MIN_MS,
             gap_max_retries=_GAP_MAX_RETRIES,
+            gap_reason_auto=GAP_REASON_AUTO,
         )
-
-        if not updated and updated_gap is not None:
-            self._log(
-                "debug",
-                "gap_added",
-                symbol=symbol,
-                start_ts=start_ts,
-                end_ts=end_ts,
-                reason=reason,
-                retry_count=updated_gap["retry_count"],
-            )
-        elif cm_gap_utils.should_warn_gap_became_persistent(
-            updated_gap, previous_retry_count, gap_max_retries=_GAP_MAX_RETRIES
-        ):
-            if not hasattr(self, "_persistent_gap_summary"):
-                self._persistent_gap_summary: Dict[str, int] = {}
-            self._persistent_gap_summary[symbol] = self._persistent_gap_summary.get(symbol, 0) + 1
-
-        self._save_known_gaps_enhanced(symbol, gaps)
 
     def _record_verified_gap(
         self,
@@ -1568,26 +1525,20 @@ class CandlestickManager:
         reason: str = GAP_REASON_NO_TRADES,
     ) -> None:
         """Record a gap as verified (no data on exchange), so we don't retry it."""
-        if start_ts > end_ts:
-            return
-        start_ts, end_ts, reason, increment_retry, retry_count = cm_gap_utils.record_verified_gap_payload(
-            start_ts,
-            end_ts,
-            reason=reason,
-            gap_max_retries=_GAP_MAX_RETRIES,
-        )
-        self._add_known_gap(
+        return cm_gap_manager_utils.record_verified_gap(
+            self,
             symbol,
             start_ts,
             end_ts,
             reason=reason,
-            increment_retry=increment_retry,
-            retry_count=retry_count,
+            now_ms=int(time.time() * 1000),
+            one_min_ms=ONE_MIN_MS,
+            gap_max_retries=_GAP_MAX_RETRIES,
+            gap_reason_auto=GAP_REASON_AUTO,
         )
 
     def _should_retry_gap(self, gap: GapEntry) -> bool:
-        """Check if a gap should be retried (retry_count < max)."""
-        return cm_gap_utils.should_retry_gap(gap, gap_max_retries=_GAP_MAX_RETRIES)
+        return cm_gap_manager_utils.should_retry_gap(gap, gap_max_retries=_GAP_MAX_RETRIES)
 
     def clear_known_gaps(
         self,
@@ -1604,35 +1555,15 @@ class CandlestickManager:
         Returns:
             Number of gaps cleared
         """
-        gaps = self._get_known_gaps_enhanced(symbol)
-        cleared, remaining = cm_gap_utils.clear_known_gaps(gaps, date_range)
-        if cleared == 0:
-            return 0
-
-        if date_range is None:
-            idx = self._ensure_symbol_index(symbol)
-            idx["meta"]["known_gaps"] = []
-            self._index[symbol] = idx
-            self._save_index(symbol)
-            self._log(
-                "info",
-                "gaps_cleared",
-                symbol=symbol,
-                cleared_count=cleared,
-            )
-            return cleared
-
-        range_start, range_end = date_range
-        self._save_known_gaps_enhanced(symbol, remaining)
-        self._log(
-            "info",
-            "gaps_cleared",
-            symbol=symbol,
-            cleared_count=cleared,
-            date_range_start=range_start,
-            date_range_end=range_end,
+        return cm_gap_manager_utils.clear_known_gaps(
+            self,
+            symbol,
+            date_range=date_range,
+            now_ms=int(time.time() * 1000),
+            one_min_ms=ONE_MIN_MS,
+            gap_reason_auto=GAP_REASON_AUTO,
+            gap_max_retries=_GAP_MAX_RETRIES,
         )
-        return cleared
 
     def get_gap_summary(self, symbol: str) -> Dict[str, Any]:
         """Get summary of known gaps for a symbol.
@@ -1646,31 +1577,14 @@ class CandlestickManager:
             - by_reason: Dict of reason -> count
             - gaps: List of gap details
         """
-        gaps = self._get_known_gaps_enhanced(symbol)
-        summary = cm_gap_utils.gap_summary(
-            gaps, one_min_ms=ONE_MIN_MS, gap_max_retries=_GAP_MAX_RETRIES
+        return cm_gap_manager_utils.get_gap_summary(
+            self,
+            symbol,
+            now_ms=int(time.time() * 1000),
+            one_min_ms=ONE_MIN_MS,
+            gap_reason_auto=GAP_REASON_AUTO,
+            gap_max_retries=_GAP_MAX_RETRIES,
         )
-        if not summary["gaps"]:
-            return summary
-
-        return {
-            "total_gaps": summary["total_gaps"],
-            "total_minutes": summary["total_minutes"],
-            "persistent_gaps": summary["persistent_gaps"],
-            "retryable_gaps": summary["retryable_gaps"],
-            "by_reason": summary["by_reason"],
-            "gaps": [
-                {
-                    "start_ts": g["start_ts"],
-                    "end_ts": g["end_ts"],
-                    "minutes": (g["end_ts"] - g["start_ts"]) // ONE_MIN_MS + 1,
-                    "retry_count": g.get("retry_count", 0),
-                    "reason": g.get("reason", GAP_REASON_AUTO),
-                    "persistent": g.get("retry_count", 0) >= _GAP_MAX_RETRIES,
-                }
-                for g in gaps
-            ],
-        }
 
     def _missing_spans(self, arr: np.ndarray, start_ts: int, end_ts: int) -> List[Tuple[int, int]]:
         """Return list of inclusive [gap_start, gap_end] minute-aligned spans missing in arr."""

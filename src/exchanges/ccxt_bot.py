@@ -34,6 +34,7 @@ To customize behavior for a new exchange:
 import asyncio
 import math
 import random
+import re
 import time
 import traceback
 
@@ -151,6 +152,18 @@ class CCXTBot(Passivbot):
                 return "long"
             if order_type.endswith("_short"):
                 return "short"
+            match = re.search(r"0x([0-9a-fA-F]{4,})", str(custom_id))
+            if match:
+                try:
+                    import passivbot_rust as pbr
+
+                    decoded = str(pbr.order_type_id_to_snake(int(match.group(1), 16)))
+                    if decoded.endswith("_long"):
+                        return "long"
+                    if decoded.endswith("_short"):
+                        return "short"
+                except Exception:
+                    pass
 
         return "both"
 
@@ -330,7 +343,12 @@ class CCXTBot(Passivbot):
             raise KeyError(f"{self.exchange}: missing total balance payload")
         if self.quote not in totals:
             raise KeyError(f"{self.exchange}: missing quote balance for {self.quote}")
-        return float(totals[self.quote])
+        return self._coerce_required_numeric_value(
+            totals[self.quote],
+            field=f"quote balance for {self.quote}",
+            symbol=None,
+            allow_zero=True,
+        )
 
     async def fetch_positions(self) -> list:
         """Template method: Fetch all open positions.
@@ -372,13 +390,30 @@ class CCXTBot(Passivbot):
         """
         positions = []
         for elm in fetched:
-            contracts = float(elm.get("contracts", 0))
+            if "contracts" not in elm:
+                raise KeyError(f"{self.exchange}: missing contracts in position payload for {elm}")
+            contracts = self._coerce_required_numeric_value(
+                elm["contracts"],
+                field="contracts",
+                symbol=elm.get("symbol"),
+                allow_zero=True,
+            )
             if contracts != 0:
+                if "entryPrice" not in elm:
+                    raise KeyError(
+                        f"{self.exchange}: missing entryPrice in open position payload for {elm.get('symbol', 'unknown')}"
+                    )
+                entry_price = self._coerce_required_numeric_value(
+                    elm["entryPrice"],
+                    field="entryPrice",
+                    symbol=elm.get("symbol"),
+                    allow_zero=False,
+                )
                 normalized = {
                     "symbol": elm["symbol"],
                     "position_side": self._get_position_side(elm),
                     "size": contracts,
-                    "price": float(elm.get("entryPrice", 0)),
+                    "price": entry_price,
                 }
                 margin_mode = self._extract_live_margin_mode(elm)
                 if margin_mode is not None:
@@ -393,7 +428,9 @@ class CCXTBot(Passivbot):
         Default: CCXT unified 'side' field
         Override: Exchange-specific logic (e.g., info.positionSide)
         """
-        return elm.get("side", "long").lower()
+        if "side" not in elm or elm["side"] in (None, ""):
+            raise KeyError(f"{self.exchange}: missing side in position payload for {elm}")
+        return str(elm["side"]).lower()
 
     async def fetch_open_orders(self, symbol: str = None) -> list:
         """Fetch open orders, optionally filtered by symbol.
@@ -862,11 +899,58 @@ class CCXTBot(Passivbot):
         for symbol, data in fetched.items():
             if symbol in self.markets_dict:
                 tickers[symbol] = {
-                    "bid": float(data.get("bid") or 0),
-                    "ask": float(data.get("ask") or 0),
-                    "last": float(data.get("last") or data.get("bid") or 0),
+                    "bid": self._coerce_required_ticker_price(symbol, data, "bid"),
+                    "ask": self._coerce_required_ticker_price(symbol, data, "ask"),
+                    "last": self._coerce_required_ticker_price(symbol, data, "last"),
                 }
         return tickers
+
+    def _coerce_required_ticker_price(self, symbol: str, data: dict, field: str) -> float:
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"{self.exchange}: invalid ticker payload type for {symbol}: {type(data).__name__}"
+            )
+        if field not in data or data[field] is None:
+            raise KeyError(f"{self.exchange}: missing {field} in ticker payload for {symbol}")
+        return self._coerce_required_numeric_value(
+            data[field],
+            field=field,
+            symbol=symbol,
+            allow_zero=False,
+            payload_kind="ticker payload",
+        )
+
+    def _coerce_required_numeric_value(
+        self,
+        raw,
+        *,
+        field: str,
+        symbol: str | None,
+        allow_zero: bool,
+        payload_kind: str = "payload",
+    ) -> float:
+        target = symbol or self.quote
+        if isinstance(raw, bool):
+            raise TypeError(
+                f"{self.exchange}: invalid boolean {field} in {payload_kind} for {target}: {raw!r}"
+            )
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                f"{self.exchange}: invalid {field} in {payload_kind} for {target}: {raw!r}"
+            ) from exc
+        if not math.isfinite(value):
+            raise ValueError(
+                f"{self.exchange}: non-finite {field} in {payload_kind} for {target}: {value}"
+            )
+        if allow_zero:
+            return value
+        if value <= 0.0:
+            raise ValueError(
+                f"{self.exchange}: non-positive {field} in {payload_kind} for {target}: {value}"
+            )
+        return value
 
     async def fetch_ohlcv(self, symbol: str, timeframe: str = "1m") -> list:
         """Fetch OHLCV candlestick data.

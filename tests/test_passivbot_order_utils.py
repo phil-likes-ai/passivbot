@@ -1,24 +1,28 @@
 import logging
-import sys
 import types
 from importlib import import_module
+from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 
-
-stub = sys.modules.get("passivbot_rust")
-if stub is None:
-    stub = types.ModuleType("passivbot_rust")
-    sys.modules["passivbot_rust"] = stub
-setattr(stub, "order_type_id_to_snake", lambda type_id: f"type_{type_id}")
-setattr(stub, "trailing_bundle_default_py", lambda: (1.0, 2.0, 3.0, 4.0))
-setattr(
-    stub,
-    "update_trailing_bundle_py",
-    lambda highs, lows, closes, bundle=None: (float(lows.min()), 9.0, float(highs.max()), 5.0),
-)
-
 order_utils = import_module("passivbot_order_utils")
+
+
+def _fake_pbr():
+    return SimpleNamespace(
+        order_type_id_to_snake=lambda type_id: f"type_{type_id}",
+        trailing_bundle_default_py=lambda: (1.0, 2.0, 3.0, 4.0),
+        update_trailing_bundle_py=lambda highs, lows, closes, bundle=None: (
+            float(lows.min()),
+            9.0,
+            float(highs.max()),
+            5.0,
+        ),
+    )
+
+
+cast(Any, order_utils).pbr = _fake_pbr()
 custom_id_to_snake = order_utils.custom_id_to_snake
 has_open_unstuck_order = order_utils.has_open_unstuck_order
 order_to_order_tuple = order_utils.order_to_order_tuple

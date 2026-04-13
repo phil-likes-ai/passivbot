@@ -5,9 +5,7 @@ import json
 import os
 import shutil
 import sys
-import termios
 import time
-import tty
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -15,6 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
+
+try:
+    import termios
+    import tty
+except ImportError:  # pragma: no cover - Windows fallback
+    termios = None
+    tty = None
 
 import aiohttp
 
@@ -1384,6 +1389,9 @@ class MonitorTuiClient:
             sys.stdout.flush()
 
     async def _command_loop(self) -> None:
+        if termios is None or tty is None:  # pragma: no cover - non-POSIX environments
+            await self._stop_event.wait()
+            return
         fd = sys.stdin.fileno()
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[str] = asyncio.Queue()

@@ -127,6 +127,32 @@ class TestCCXTBotFetchBalance:
         with pytest.raises(KeyError, match="missing quote balance"):
             await bot.fetch_balance()
 
+    @pytest.mark.asyncio
+    async def test_fetch_balance_raises_when_quote_balance_is_boolean(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.quote = "USDT"
+        bot.cca = AsyncMock()
+        bot.cca.fetch_balance = AsyncMock(return_value={"total": {"USDT": True}})
+
+        with pytest.raises(TypeError, match="invalid boolean quote balance for USDT"):
+            await bot.fetch_balance()
+
+    @pytest.mark.asyncio
+    async def test_fetch_balance_raises_when_quote_balance_is_non_finite(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.quote = "USDT"
+        bot.cca = AsyncMock()
+        bot.cca.fetch_balance = AsyncMock(return_value={"total": {"USDT": float("nan")}})
+
+        with pytest.raises(ValueError, match="non-finite quote balance for USDT"):
+            await bot.fetch_balance()
+
 
 class TestCCXTBotFetchPositions:
     """Test CCXTBot position fetching."""
@@ -186,6 +212,108 @@ class TestCCXTBotFetchPositions:
         positions = await bot.fetch_positions()
 
         assert positions == []
+
+    @pytest.mark.asyncio
+    async def test_fetch_positions_raises_when_side_missing_on_open_position(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.cca = AsyncMock()
+        bot.cca.fetch_positions = AsyncMock(
+            return_value=[
+                {
+                    "symbol": "BTC/USDT:USDT",
+                    "contracts": 0.5,
+                    "entryPrice": 50000.0,
+                }
+            ]
+        )
+
+        with pytest.raises(KeyError, match="missing side in position payload"):
+            await bot.fetch_positions()
+
+    @pytest.mark.asyncio
+    async def test_fetch_positions_raises_when_entry_price_missing_on_open_position(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.cca = AsyncMock()
+        bot.cca.fetch_positions = AsyncMock(
+            return_value=[
+                {
+                    "symbol": "BTC/USDT:USDT",
+                    "side": "long",
+                    "contracts": 0.5,
+                }
+            ]
+        )
+
+        with pytest.raises(KeyError, match="missing entryPrice in open position payload"):
+            await bot.fetch_positions()
+
+    @pytest.mark.asyncio
+    async def test_fetch_positions_raises_when_contracts_missing(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.cca = AsyncMock()
+        bot.cca.fetch_positions = AsyncMock(
+            return_value=[
+                {
+                    "symbol": "BTC/USDT:USDT",
+                    "side": "long",
+                    "entryPrice": 50000.0,
+                }
+            ]
+        )
+
+        with pytest.raises(KeyError, match="missing contracts in position payload"):
+            await bot.fetch_positions()
+
+    @pytest.mark.asyncio
+    async def test_fetch_positions_raises_when_contracts_is_boolean(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.cca = AsyncMock()
+        bot.cca.fetch_positions = AsyncMock(
+            return_value=[
+                {
+                    "symbol": "BTC/USDT:USDT",
+                    "side": "long",
+                    "contracts": True,
+                    "entryPrice": 50000.0,
+                }
+            ]
+        )
+
+        with pytest.raises(TypeError, match="invalid boolean contracts in payload"):
+            await bot.fetch_positions()
+
+    @pytest.mark.asyncio
+    async def test_fetch_positions_raises_when_entry_price_is_non_positive(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.cca = AsyncMock()
+        bot.cca.fetch_positions = AsyncMock(
+            return_value=[
+                {
+                    "symbol": "BTC/USDT:USDT",
+                    "side": "long",
+                    "contracts": 0.5,
+                    "entryPrice": 0.0,
+                }
+            ]
+        )
+
+        with pytest.raises(ValueError, match="non-positive entryPrice in payload"):
+            await bot.fetch_positions()
 
 
 class TestCCXTBotFetchOpenOrders:
@@ -693,8 +821,8 @@ class TestCCXTBotFetchTickers:
         assert tickers["BTC/USDT:USDT"]["last"] == 50005.0
 
     @pytest.mark.asyncio
-    async def test_fetch_tickers_handles_missing_values(self):
-        """Test that missing ticker values default to 0 or fallback."""
+    async def test_fetch_tickers_raises_when_required_price_missing(self):
+        """Missing required ticker prices must fail loudly."""
         from exchanges.ccxt_bot import CCXTBot
 
         bot = CCXTBot.__new__(CCXTBot)
@@ -707,11 +835,26 @@ class TestCCXTBotFetchTickers:
             }
         )
 
-        tickers = await bot.fetch_tickers()
+        with pytest.raises(KeyError, match="missing ask in ticker payload"):
+            await bot.fetch_tickers()
 
-        assert tickers["BTC/USDT:USDT"]["bid"] == 50000.0
-        assert tickers["BTC/USDT:USDT"]["ask"] == 0  # None -> 0
-        assert tickers["BTC/USDT:USDT"]["last"] == 50000.0  # Falls back to bid
+    @pytest.mark.asyncio
+    async def test_fetch_tickers_raises_when_required_price_non_positive(self):
+        """Zero/negative ticker prices must fail loudly."""
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.markets_dict = {"BTC/USDT:USDT": {}}
+        bot.cca = AsyncMock()
+        bot.cca.fetch_tickers = AsyncMock(
+            return_value={
+                "BTC/USDT:USDT": {"bid": 50000.0, "ask": 50010.0, "last": 0.0},
+            }
+        )
+
+        with pytest.raises(ValueError, match="non-positive last in ticker payload"):
+            await bot.fetch_tickers()
 
     @pytest.mark.asyncio
     async def test_fetch_tickers_raises_on_error(self):

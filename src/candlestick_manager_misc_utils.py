@@ -18,7 +18,7 @@ def looks_like_daily_shard_filename(name: str) -> bool:
         return False
     try:
         datetime.strptime(stem, "%Y-%m-%d")
-    except Exception:
+    except ValueError:
         return False
     return True
 
@@ -69,13 +69,9 @@ def quarantine_root_level_timeframe_debris(cache_base: str) -> int:
 
 
 def tf_to_ms(s: str | None, one_min_ms: int) -> int:
-    if not s:
+    if not isinstance(s, str) or not s:
         return one_min_ms
-    try:
-        st = s.strip().lower()
-    except Exception:
-        return one_min_ms
-
+    st = s.strip().lower()
     match = re.fullmatch(r"(\d+)([smhd])", st)
     if not match:
         return one_min_ms
@@ -182,7 +178,7 @@ def get_caller_name(depth: int = 2, logger: logging.Logger | None = None) -> str
 def quarantine_gateio_cache_if_stale(cache_base: str, cutoff_date: str) -> None:
     try:
         cutoff = datetime.strptime(cutoff_date, "%Y-%m-%d").date()
-    except Exception:
+    except ValueError:
         logging.warning(
             "Invalid GATEIO_CACHE_CUTOFF_DATE=%r; skipping gateio cache check", cutoff_date
         )
@@ -205,7 +201,7 @@ def quarantine_gateio_cache_if_stale(cache_base: str, cutoff_date: str) -> None:
                 continue
             try:
                 day = datetime.strptime(fname[:10], "%Y-%m-%d").date()
-            except Exception:
+            except ValueError:
                 continue
             if day < cutoff:
                 stamp = utc_now_datetime().strftime("%Y%m%dT%H%M%SZ")
@@ -218,6 +214,6 @@ def quarantine_gateio_cache_if_stale(cache_base: str, cutoff_date: str) -> None:
                 )
                 try:
                     os.rename(gateio_root, backup)
-                except Exception as exc:
+                except OSError as exc:
                     logging.error("Failed to move gateio cache to backup: %s", exc)
                 return

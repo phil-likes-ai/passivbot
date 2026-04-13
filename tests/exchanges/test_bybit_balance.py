@@ -7,6 +7,7 @@ from exchanges.bybit import BybitBot
 @pytest.mark.asyncio
 async def test_fetch_balance_unified_counts_only_enabled_collateral():
     bot = BybitBot.__new__(BybitBot)
+    bot.exchange = "bybit"
     bot.quote = "USDT"
     bot.cca = AsyncMock()
     bot.cca.fetch_balance = AsyncMock(
@@ -45,6 +46,7 @@ async def test_fetch_balance_unified_counts_only_enabled_collateral():
 @pytest.mark.asyncio
 async def test_fetch_balance_unified_handles_string_flags_correctly():
     bot = BybitBot.__new__(BybitBot)
+    bot.exchange = "bybit"
     bot.quote = "USDT"
     bot.cca = AsyncMock()
     bot.cca.fetch_balance = AsyncMock(
@@ -89,6 +91,7 @@ async def test_fetch_balance_unified_handles_string_flags_correctly():
 @pytest.mark.asyncio
 async def test_fetch_balance_non_unified_uses_quote_total():
     bot = BybitBot.__new__(BybitBot)
+    bot.exchange = "bybit"
     bot.quote = "USDT"
     bot.cca = AsyncMock()
     bot.cca.fetch_balance = AsyncMock(
@@ -106,6 +109,7 @@ async def test_fetch_balance_non_unified_uses_quote_total():
 @pytest.mark.asyncio
 async def test_fetch_balance_raises_on_malformed_unified_payload():
     bot = BybitBot.__new__(BybitBot)
+    bot.exchange = "bybit"
     bot.quote = "USDT"
     bot.cca = AsyncMock()
     bot.cca.fetch_balance = AsyncMock(
@@ -115,4 +119,53 @@ async def test_fetch_balance_raises_on_malformed_unified_payload():
     )
 
     with pytest.raises(KeyError, match="coin list"):
+        await bot.fetch_balance()
+
+
+@pytest.mark.asyncio
+async def test_fetch_balance_raises_when_unified_usd_value_is_boolean():
+    bot = BybitBot.__new__(BybitBot)
+    bot.exchange = "bybit"
+    bot.quote = "USDT"
+    bot.cca = AsyncMock()
+    bot.cca.fetch_balance = AsyncMock(
+        return_value={
+            "info": {
+                "result": {
+                    "list": [
+                        {
+                            "accountType": "UNIFIED",
+                            "coin": [
+                                {
+                                    "marginCollateral": True,
+                                    "collateralSwitch": True,
+                                    "usdValue": True,
+                                    "unrealisedPnl": "2.5",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+    )
+
+    with pytest.raises(TypeError, match="invalid boolean usdValue"):
+        await bot.fetch_balance()
+
+
+@pytest.mark.asyncio
+async def test_fetch_balance_raises_when_non_unified_quote_total_is_non_finite():
+    bot = BybitBot.__new__(BybitBot)
+    bot.exchange = "bybit"
+    bot.quote = "USDT"
+    bot.cca = AsyncMock()
+    bot.cca.fetch_balance = AsyncMock(
+        return_value={
+            "info": {"result": {"list": [{"accountType": "CONTRACT"}]}},
+            "USDT": {"total": float("inf")},
+        }
+    )
+
+    with pytest.raises(ValueError, match="non-finite total"):
         await bot.fetch_balance()

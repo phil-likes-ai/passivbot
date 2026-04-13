@@ -51,17 +51,46 @@ class GateIOBot(CCXTBot):
         margin modes.
         """
         balance_fetched = await self.cca.fetch_balance()
+        info = balance_fetched.get("info")
+        if not isinstance(info, list) or not info or not isinstance(info[0], dict):
+            raise KeyError(f"{self.exchange}: missing info payload in fetch_balance response")
+        info0 = info[0]
         if not hasattr(self, "uid") or not self.uid:
-            self.uid = balance_fetched["info"][0]["user"]
+            if "user" not in info0:
+                raise KeyError(f"{self.exchange}: missing user in fetch_balance response")
+            self.uid = info0["user"]
             self.cca.uid = self.uid
             if self.ccp is not None:
                 self.ccp.uid = self.uid
-        margin_mode_name = balance_fetched["info"][0]["margin_mode_name"]
+        if "margin_mode_name" not in info0:
+            raise KeyError(f"{self.exchange}: missing margin_mode_name in fetch_balance response")
+        margin_mode_name = info0["margin_mode_name"]
         self.log_once(f"account margin mode: {margin_mode_name}")
         if margin_mode_name == "classic":
-            balance = float(balance_fetched[self.quote]["total"])
+            quote_payload = balance_fetched.get(self.quote)
+            if not isinstance(quote_payload, dict) or "total" not in quote_payload:
+                raise KeyError(
+                    f"{self.exchange}: missing classic quote balance for {self.quote}"
+                )
+            balance = self._coerce_required_numeric_value(
+                quote_payload["total"],
+                field="total",
+                symbol=self.quote,
+                allow_zero=True,
+                payload_kind="balance payload",
+            )
         elif margin_mode_name == "multi_currency":
-            balance = float(balance_fetched["info"][0]["cross_available"])
+            if "cross_available" not in info0:
+                raise KeyError(
+                    f"{self.exchange}: missing cross_available in fetch_balance response"
+                )
+            balance = self._coerce_required_numeric_value(
+                info0["cross_available"],
+                field="cross_available",
+                symbol=self.quote,
+                allow_zero=True,
+                payload_kind="balance payload",
+            )
         else:
             raise Exception(f"unknown margin_mode_name {balance_fetched}")
         return balance

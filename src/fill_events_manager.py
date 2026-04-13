@@ -17,13 +17,11 @@ import fill_events_bitget_utils as bitget_utils
 import fill_events_bybit_utils as bybit_utils
 import fill_events_cache_utils as cache_utils
 import fill_events_cli_utils as cli_utils
-import fill_events_coalesce_utils as coalesce_utils
 import fill_events_fee_utils as fee_utils
 import fill_events_fetcher_utils as fetcher_utils
 import fill_events_gateio_utils as gateio_utils
 import fill_events_hyperliquid_utils as hyperliquid_utils
 import fill_events_kucoin_utils as kucoin_utils
-import fill_events_model_utils as model_utils
 import fill_events_okx_utils as okx_utils
 import fill_events_pagination_utils as pagination_utils
 import fill_events_parse_utils as parse_utils
@@ -63,7 +61,6 @@ import random
 import tempfile
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from importlib import import_module
 from pathlib import Path
@@ -71,6 +68,11 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Ty
 
 from ccxt.base.errors import RateLimitExceeded
 from config import load_input_config, prepare_config
+
+try:
+    import fill_events_data_model as data_model
+except ImportError:  # pragma: no cover - package-relative fallback
+    from . import fill_events_data_model as data_model
 
 try:
     from utils import ts_to_date  # type: ignore
@@ -388,7 +390,7 @@ def compute_realized_pnls_from_trades(
 
 
 def _coalesce_events(events: List[Dict[str, object]]) -> List[Dict[str, object]]:
-    return coalesce_utils.coalesce_events(events, _merge_fee_lists, _normalize_raw_field)
+    return data_model.coalesce_events(events, _merge_fee_lists)
 
 
 # ---------------------------------------------------------------------------
@@ -396,67 +398,28 @@ def _coalesce_events(events: List[Dict[str, object]]) -> List[Dict[str, object]]
 # ---------------------------------------------------------------------------
 
 
-def _normalize_raw_field(raw: object) -> List[Dict[str, object]]:
-    return parse_utils.normalize_raw_field(raw)
+_normalize_raw_field = data_model.normalize_raw_field
 
 
-def _extract_source_ids(raw: object, fallback_id: Optional[object]) -> List[str]:
-    return parse_utils.extract_source_ids(raw, fallback_id)
+_extract_source_ids = data_model.extract_source_ids
 
 
-def _bybit_trade_dedupe_key(trade: Dict[str, object]) -> Optional[Tuple[object, ...]]:
-    return parse_utils.bybit_trade_dedupe_key(trade)
+_bybit_trade_dedupe_key = data_model.bybit_trade_dedupe_key
 
 
-def _bybit_trade_qty_abs(trade: Dict[str, object]) -> float:
-    return parse_utils.bybit_trade_qty_abs(trade)
+_bybit_trade_qty_abs = data_model.bybit_trade_qty_abs
 
 
-def _bybit_trade_qty_signed(trade: Dict[str, object]) -> float:
-    return parse_utils.bybit_trade_qty_signed(trade)
+_bybit_trade_qty_signed = data_model.bybit_trade_qty_signed
 
 
-def _bybit_event_group_key(event: FillEvent) -> Tuple[int, str, str, str, str]:
-    return parse_utils.bybit_event_group_key(event)
+_bybit_event_group_key = data_model.bybit_event_group_key
 
 
-@dataclass(frozen=True)
-class FillEvent:
-    """Canonical representation of a single fill event."""
+_check_pagination_progress = pagination_utils.check_pagination_progress
 
-    id: str
-    timestamp: int
-    datetime: str
-    symbol: str
-    side: str
-    qty: float
-    price: float
-    pnl: float
-    fees: Optional[Sequence]
-    pb_order_type: str
-    position_side: str
-    client_order_id: str
-    source_ids: List[str] = field(default_factory=list)
-    psize: float = 0.0
-    pprice: float = 0.0
-    raw: List[Dict[str, object]] = None  # List of raw payloads from multiple sources
 
-    @property
-    def key(self) -> str:
-        return model_utils.fill_event_key(self)
-
-    def to_dict(self) -> Dict[str, object]:
-        return model_utils.fill_event_to_dict(self)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, object]) -> "FillEvent":
-        return cls(
-            **model_utils.fill_event_from_dict_kwargs(
-                data,
-                extract_source_ids=_extract_source_ids,
-                normalize_raw_field=_normalize_raw_field,
-            )
-        )
+FillEvent = data_model.FillEvent
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +471,7 @@ class FillEventCache:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self._metadata: Optional[CacheMetadata] = None
+        self.logger = logger
 
     def load(self) -> List[FillEvent]:
         return cache_utils.load_events(self, FillEvent)
@@ -560,7 +524,8 @@ class FillEventCache:
             end_ts,
             reason=reason,
             confidence=confidence,
-            max_retries=_GAP_MAX_RETRIES,
+            gap_max_retries=_GAP_MAX_RETRIES,
+            likely_legitimate_confidence=GAP_CONFIDENCE_LIKELY_LEGITIMATE,
         )
 
     def clear_gap(self, start_ts: int, end_ts: int) -> bool:
@@ -570,7 +535,7 @@ class FillEventCache:
         return cache_utils.should_retry_gap(gap, _GAP_MAX_RETRIES)
 
     def get_coverage_summary(self) -> Dict[str, object]:
-        return cache_utils.get_coverage_summary(self, max_retries=_GAP_MAX_RETRIES)
+        return cache_utils.get_coverage_summary(self, gap_max_retries=_GAP_MAX_RETRIES)
 
 
 # ---------------------------------------------------------------------------
@@ -1646,7 +1611,7 @@ class FillEventsManager:
                     raise ValueError(
                         "[fills] malformed canonical event "
                         f"exchange={self.exchange} event_id={raw.get('id')!r}: {exc}"
-                    ) from exc
+                    )
                 source_key = tuple(event.source_ids) if event.source_ids else tuple()
                 replaced_ids: set[str] = set()
                 if source_key and source_key in source_ids_index:

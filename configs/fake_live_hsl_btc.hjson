@@ -49,8 +49,8 @@
     }
     short: {
       hsl_enabled: false
-      ema_span_0: 0.0
-      ema_span_1: 0.0
+      ema_span_0: 1.0
+      ema_span_1: 2.0
       entry_volatility_ema_span_hours: 0.0
       forager_score_weights: {volume: 1.0, ema_readiness: 0.0, volatility: 0.0}
       forager_volatility_ema_span: 0.0

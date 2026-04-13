@@ -133,6 +133,17 @@ async def calc_upnl_sum(self):
     return upnl_sum
 
 
+async def initialize_balance(self):
+    balance_raw = await self.fetch_balance()
+    if balance_raw is None:
+        raise RuntimeError("fetch_balance returned None")
+    balance_raw = float(balance_raw)
+    self.balance_raw = balance_raw
+    self.balance = balance_raw
+    self.previous_hysteresis_balance = balance_raw
+    return balance_raw
+
+
 async def update_effective_min_cost(self, symbol=None):
     """Update the effective minimum order cost for one or all symbols."""
     if not hasattr(self, "effective_min_cost"):

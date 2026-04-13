@@ -18,7 +18,7 @@ import math
 import os
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -297,8 +297,11 @@ class TestHLCVManagerBasics:
                 async def mock_get_candles(*args, **kwargs):
                     return numpy_data
 
+                assert om.cm is not None
+                assert om.cm is not None
+                assert om.cm is not None
                 om.cm.get_candles = mock_get_candles
-                om.cm.standardize_gaps = lambda arr, **kwargs: arr  # Don't modify the data
+                om.cm.standardize_gaps = lambda candles, **kwargs: cast(np.ndarray, candles)
 
                 df = await om.get_ohlcvs("BTC")
 
@@ -350,8 +353,9 @@ class TestHLCVManagerGapHandling:
                     # Return filled version
                     return combined
 
+                assert om.cm is not None
                 om.cm.get_candles = mock_get_candles
-                om.cm.standardize_gaps = lambda arr, **kwargs: arr
+                om.cm.standardize_gaps = lambda candles, **kwargs: cast(np.ndarray, candles)
 
                 df = await om.get_ohlcvs("BTC")
 
@@ -391,6 +395,7 @@ class TestHLCVManagerGapHandling:
                 async def mock_get_candles(*args, **kwargs):
                     return combined
 
+                assert om.cm is not None
                 om.cm.get_candles = mock_get_candles
 
                 df = await om.get_ohlcvs("BTC")
@@ -433,8 +438,9 @@ class TestHLCVManagerGapHandling:
                 async def mock_get_candles(*args, **kwargs):
                     return combined
 
+                assert om.cm is not None
                 om.cm.get_candles = mock_get_candles
-                om.cm.standardize_gaps = lambda arr, **kwargs: arr
+                om.cm.standardize_gaps = lambda candles, **kwargs: cast(np.ndarray, candles)
 
                 df = await om.get_ohlcvs("BTC")
 
@@ -491,10 +497,10 @@ class TestPrepareHLCVSBtcFallback:
 
         async def mock_get_ohlcvs(self, coin, *args, **kwargs):
             if coin != "BTC":
-                return pd.DataFrame(columns=["timestamp", "close"])
+                return pd.DataFrame({"timestamp": [], "close": []})
             calls.append(self.exchange)
             if self.exchange == "hyperliquid":
-                return pd.DataFrame(columns=["timestamp", "close"])
+                return pd.DataFrame({"timestamp": [], "close": []})
             return pd.DataFrame(
                 {
                     "timestamp": timestamps,
@@ -541,6 +547,7 @@ class TestHLCVManagerErrorHandling:
                 async def mock_get_candles(*args, **kwargs):
                     return np.array([], dtype=CANDLE_DTYPE)
 
+                assert om.cm is not None
                 om.cm.get_candles = mock_get_candles
 
                 df = await om.get_ohlcvs("BTC")
@@ -602,8 +609,9 @@ class TestHLCVManagerErrorHandling:
                 async def mock_get_candles(*args, **kwargs):
                     return create_numpy_candles(start_ts, 1, base_price=50000.0)
 
+                assert om.cm is not None
                 om.cm.get_candles = mock_get_candles
-                om.cm.standardize_gaps = lambda arr, **kwargs: arr
+                om.cm.standardize_gaps = lambda candles, **kwargs: cast(np.ndarray, candles)
 
                 df = await om.get_ohlcvs("BTC")
 
@@ -1083,7 +1091,8 @@ class TestOHLCVSourceDir:
         from utils import date_to_ts
 
         source_dir = tmp_path / "ohlcv_source"
-        exchange_dir = source_dir / "hyperliquid" / "1m" / "xyz:AAPL"
+        source_symbol_dir = "xyz:AAPL" if os.name != "nt" else "xyz_AAPL"
+        exchange_dir = source_dir / "hyperliquid" / "1m" / source_symbol_dir
         exchange_dir.mkdir(parents=True)
 
         day = "2024-01-15"

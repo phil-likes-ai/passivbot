@@ -11,6 +11,9 @@ from config.access import get_optional_live_value
 from utils import format_approved_ignored_coins, utc_ms
 
 
+_ORIGINAL_FORMAT_APPROVED_IGNORED_COINS = format_approved_ignored_coins
+
+
 def _require_total_wallet_exposure_limit(self, position_side: str) -> float:
     """Return a required finite TWEL value or raise with actionable context."""
     try:
@@ -156,17 +159,24 @@ async def run_startup_preloop(self, set_stage) -> bool:
     Returns False when startup should abort gracefully after emitting stop state.
     """
     set_stage("format_approved_ignored_coins")
-    await format_approved_ignored_coins(self.config, self.user_info["exchange"], quote=self.quote)
+    formatter = getattr(self, "format_approved_ignored_coins", None)
+    if formatter is None:
+        try:
+            passivbot_formatter = getattr(__import__("passivbot"), "format_approved_ignored_coins")
+            if format_approved_ignored_coins is not _ORIGINAL_FORMAT_APPROVED_IGNORED_COINS:
+                formatter = format_approved_ignored_coins
+            else:
+                formatter = passivbot_formatter
+        except Exception:
+            formatter = format_approved_ignored_coins
+    await formatter(self.config, self.user_info["exchange"], quote=self.quote)
 
     set_stage("init_markets")
     await self.init_markets()
     await self._monitor_flush_snapshot(force=True, ts=utc_ms())
 
     set_stage("warmup_candles_staggered")
-    try:
-        await self.warmup_candles_staggered()
-    except Exception as e:
-        logging.info("[boot] warmup skipped due to exception", exc_info=e)
+    await self.warmup_candles_staggered()
 
     if self._equity_hard_stop_enabled():
         set_stage("equity_hard_stop_initialize_from_history")

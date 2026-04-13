@@ -67,6 +67,50 @@ class TestNormalizeOrderUpdate:
         assert result["position_side"] == "both"
 
 
+class TestBalanceAndPositionNumericValidation:
+    def test_get_balance_raises_when_quote_balance_is_boolean(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.quote = "USDT"
+
+        with pytest.raises(TypeError, match="invalid boolean quote balance for USDT"):
+            bot._get_balance({"total": {"USDT": False}})
+
+    def test_get_balance_raises_when_quote_balance_is_non_finite(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+        bot.quote = "USDT"
+
+        with pytest.raises(ValueError, match="non-finite quote balance for USDT"):
+            bot._get_balance({"total": {"USDT": float("inf")}})
+
+    def test_normalize_positions_raises_when_contracts_is_boolean(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+
+        with pytest.raises(TypeError, match="invalid boolean contracts in payload"):
+            bot._normalize_positions(
+                [{"symbol": "BTC/USDT:USDT", "side": "long", "contracts": True, "entryPrice": 5.0}]
+            )
+
+    def test_normalize_positions_raises_when_entry_price_is_non_positive(self):
+        from exchanges.ccxt_bot import CCXTBot
+
+        bot = CCXTBot.__new__(CCXTBot)
+        bot.exchange = "testexchange"
+
+        with pytest.raises(ValueError, match="non-positive entryPrice in payload"):
+            bot._normalize_positions(
+                [{"symbol": "BTC/USDT:USDT", "side": "long", "contracts": 1.0, "entryPrice": 0.0}]
+            )
+
+
 class TestRateLimitBackoffHelper:
     def test_rate_limit_backoff_grows_and_respects_cap(self, monkeypatch):
         from exchanges.ccxt_bot import CCXTBot
@@ -506,11 +550,12 @@ class TestFetchPositionsHooks:
         assert bot._get_position_side({"side": "short"}) == "short"
         assert bot._get_position_side({"side": "SHORT"}) == "short"
 
-    def test_get_position_side_defaults_to_long(self, bot_with_mock_cca):
-        """_get_position_side should default to 'long' when missing."""
+    def test_get_position_side_raises_when_missing(self, bot_with_mock_cca):
+        """_get_position_side should fail loudly when side is missing."""
         bot = bot_with_mock_cca
 
-        assert bot._get_position_side({}) == "long"
+        with pytest.raises(KeyError, match="missing side in position payload"):
+            bot._get_position_side({})
 
     def test_normalize_positions_transforms_list(self, bot_with_mock_cca):
         """_normalize_positions should transform to passivbot format."""
@@ -548,6 +593,20 @@ class TestFetchPositionsHooks:
 
         assert len(result) == 1
         assert result[0]["symbol"] == "ETH/USDT:USDT"
+
+    def test_normalize_positions_raises_when_contracts_missing(self, bot_with_mock_cca):
+        bot = bot_with_mock_cca
+
+        with pytest.raises(KeyError, match="missing contracts in position payload"):
+            bot._normalize_positions([{"symbol": "BTC/USDT:USDT", "side": "long", "entryPrice": 50000}])
+
+    def test_normalize_positions_raises_when_entry_price_missing_for_open_position(
+        self, bot_with_mock_cca
+    ):
+        bot = bot_with_mock_cca
+
+        with pytest.raises(KeyError, match="missing entryPrice in open position payload"):
+            bot._normalize_positions([{"symbol": "BTC/USDT:USDT", "side": "long", "contracts": 1.0}])
 
     @pytest.mark.asyncio
     async def test_fetch_positions_uses_hooks(self, bot_with_mock_cca):
@@ -702,18 +761,25 @@ class TestFetchTickersHooks:
         assert "BTC/USDT:USDT" in result
         assert "UNKNOWN/USDT:USDT" not in result
 
-    def test_normalize_tickers_handles_none_values(self, bot_with_mock_cca):
-        """_normalize_tickers should handle None bid/ask/last values."""
+    def test_normalize_tickers_raises_when_required_price_missing(self, bot_with_mock_cca):
+        """_normalize_tickers should fail loudly on missing required prices."""
         bot = bot_with_mock_cca
         fetched = {
             "BTC/USDT:USDT": {"bid": None, "ask": 50001, "last": None},
         }
 
-        result = bot._normalize_tickers(fetched)
+        with pytest.raises(KeyError, match="missing bid in ticker payload"):
+            bot._normalize_tickers(fetched)
 
-        assert result["BTC/USDT:USDT"]["bid"] == 0
-        assert result["BTC/USDT:USDT"]["ask"] == 50001
-        assert result["BTC/USDT:USDT"]["last"] == 0  # Falls back to bid which is also 0
+    def test_normalize_tickers_raises_when_required_price_non_positive(self, bot_with_mock_cca):
+        """_normalize_tickers should reject non-positive prices."""
+        bot = bot_with_mock_cca
+        fetched = {
+            "BTC/USDT:USDT": {"bid": 50000, "ask": 50001, "last": 0},
+        }
+
+        with pytest.raises(ValueError, match="non-positive last in ticker payload"):
+            bot._normalize_tickers(fetched)
 
     @pytest.mark.asyncio
     async def test_fetch_tickers_uses_hooks(self, bot_with_mock_cca):

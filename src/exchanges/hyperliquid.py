@@ -188,8 +188,23 @@ class HyperliquidBot(CCXTBot):
         )
 
     def _normalize_ccxt_position(self, position: dict) -> dict:
-        side = position.get("side")
-        contracts = float(position.get("contracts") or 0.0)
+        side_raw = position.get("side")
+        if side_raw is None:
+            raise KeyError(
+                f"{self.exchange}: missing side in position payload for {position.get('symbol')}"
+            )
+        side = str(side_raw).lower()
+        if side not in {"long", "short"}:
+            raise ValueError(
+                f"{self.exchange}: invalid side in position payload for {position.get('symbol')}: {side_raw!r}"
+            )
+        contracts = self._coerce_required_numeric_value(
+            position["contracts"],
+            field="contracts",
+            symbol=position.get("symbol"),
+            allow_zero=True,
+            payload_kind="position payload",
+        )
         if side == "short":
             contracts = -contracts
         margin_mode = position.get("marginMode")
@@ -203,7 +218,13 @@ class HyperliquidBot(CCXTBot):
             "symbol": position["symbol"],
             "position_side": side,
             "size": contracts,
-            "price": float(position.get("entryPrice") or 0.0),
+            "price": self._coerce_required_numeric_value(
+                position["entryPrice"],
+                field="entryPrice",
+                symbol=position.get("symbol"),
+                allow_zero=abs(contracts) == 0.0,
+                payload_kind="position payload",
+            ),
             "margin_mode": str(margin_mode).lower() if margin_mode else None,
         }
 

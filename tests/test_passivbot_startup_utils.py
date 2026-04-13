@@ -219,11 +219,10 @@ async def test_run_startup_preloop_runs_stages_and_returns_true(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_startup_preloop_continues_after_warmup_failure_with_exc_info(caplog, monkeypatch):
+async def test_run_startup_preloop_raises_on_warmup_failure_and_stops_before_later_stages(monkeypatch):
     monkeypatch.setattr(pb_startup_utils.asyncio, "sleep", lambda seconds: _async_capture([], seconds))
     monkeypatch.setattr(pb_startup_utils, "format_approved_ignored_coins", lambda config, exchange, quote=None: _async_capture([], (exchange, quote)))
     monkeypatch.setattr(pb_startup_utils, "utc_ms", lambda: 333)
-    caplog.set_level(logging.INFO)
     stages = []
     flushes = []
     later_stage_calls = []
@@ -243,19 +242,16 @@ async def test_run_startup_preloop_continues_after_warmup_failure_with_exc_info(
         start_data_maintainers=lambda: _async_capture(later_stage_calls, "maintainers"),
     )
 
-    result = await pb_startup_utils.run_startup_preloop(bot, stages.append)
+    with pytest.raises(RuntimeError, match="warmup boom"):
+        await pb_startup_utils.run_startup_preloop(bot, stages.append)
 
-    assert result is True
     assert stages == [
         "format_approved_ignored_coins",
         "init_markets",
         "warmup_candles_staggered",
-        "post_init_sleep",
-        "start_data_maintainers",
     ]
     assert flushes == [(True, 333)]
-    assert later_stage_calls == ["memory", "maintainers"]
-    assert any(record.exc_info for record in caplog.records)
+    assert later_stage_calls == []
 
 
 @pytest.mark.asyncio

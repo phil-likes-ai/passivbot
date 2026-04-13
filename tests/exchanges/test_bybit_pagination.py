@@ -102,3 +102,43 @@ async def test_fetch_positions_paginates_and_deduplicates():
 
     assert len(positions) == 2
     assert {p["symbol"] for p in positions} == {"BTC/USDT:USDT", "ETH/USDT:USDT"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_positions_raises_when_side_missing():
+    bot = BybitBot.__new__(BybitBot)
+    bot.exchange = "bybit"
+    bot.cca = AsyncMock()
+    bot._record_live_margin_mode = lambda symbol, margin_mode: None
+
+    async def fetch_positions(params=None):
+        return [{"symbol": "BTC/USDT:USDT", "contracts": 1, "entryPrice": 50000, "info": {}}]
+
+    bot.cca.fetch_positions = fetch_positions
+
+    with pytest.raises(KeyError, match="missing side"):
+        await bot.fetch_positions()
+
+
+@pytest.mark.asyncio
+async def test_fetch_positions_raises_when_entry_price_is_non_positive_for_open_position():
+    bot = BybitBot.__new__(BybitBot)
+    bot.exchange = "bybit"
+    bot.cca = AsyncMock()
+    bot._record_live_margin_mode = lambda symbol, margin_mode: None
+
+    async def fetch_positions(params=None):
+        return [
+            {
+                "symbol": "BTC/USDT:USDT",
+                "side": "long",
+                "contracts": 1,
+                "entryPrice": 0,
+                "info": {},
+            }
+        ]
+
+    bot.cca.fetch_positions = fetch_positions
+
+    with pytest.raises(ValueError, match="non-positive entryPrice"):
+        await bot.fetch_positions()

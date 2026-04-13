@@ -765,6 +765,78 @@ async def test_active_red_runtime_keeps_panic_mode_in_rust_payload(monkeypatch):
     assert snapshot["orchestrator_input"]["symbols"][0]["long"]["mode"] == "panic"
 
 
+@pytest.mark.asyncio
+async def test_calc_ideal_orders_orchestrator_falls_back_to_cm_when_fetch_tickers_raises(
+    monkeypatch,
+):
+    cfg = _dummy_config()
+    bot = _make_dummy_bot(cfg, last_price=101.0)
+    symbol = _set_basic_state(bot)
+    import passivbot_rust as pbr
+
+    bot.coin_overrides = {}
+    bot.markets_dict = {symbol: {"active": True}}
+    bot.effective_min_cost = {symbol: 1.0}
+    bot.trailing_prices = {
+        symbol: {
+            "long": {
+                "min_since_open": 0.0,
+                "max_since_min": 0.0,
+                "max_since_open": 0.0,
+                "min_since_max": 0.0,
+            },
+            "short": {
+                "min_since_open": 0.0,
+                "max_since_min": 0.0,
+                "max_since_open": 0.0,
+                "min_since_max": 0.0,
+            },
+        }
+    }
+
+    cm_calls = {}
+
+    async def fake_fetch_tickers(self):
+        raise RuntimeError("testexchange: missing ask in ticker payload for TEST/USDT")
+
+    async def fake_get_last_prices(symbols, max_age_ms=None):
+        cm_calls["symbols"] = list(symbols)
+        cm_calls["max_age_ms"] = max_age_ms
+        return {symbol: 123.45 for symbol in symbols}
+
+    async def fake_load_bundle(self, symbols, modes):
+        m1_close = {symbol: {1.0: 100.0, 2.0: 100.0, (1.0 * 2.0) ** 0.5: 100.0}}
+        m1_volume = {symbol: {}}
+        m1_log_range = {symbol: {}}
+        h1_log_range = {symbol: {}}
+        return m1_close, m1_volume, m1_log_range, h1_log_range, {}, {}
+
+    captured = {}
+
+    def fake_compute(input_json: str) -> str:
+        captured["input"] = json.loads(input_json)
+        return '{"orders": [], "diagnostics": {"warnings": []}}'
+
+    monkeypatch.setattr(bot, "fetch_tickers", types.MethodType(fake_fetch_tickers, bot), raising=False)
+    bot.cm.get_last_prices = fake_get_last_prices
+    monkeypatch.setattr(bot, "_load_orchestrator_ema_bundle", types.MethodType(fake_load_bundle, bot))
+    monkeypatch.setattr(
+        bot,
+        "_get_realized_pnl_cumsum_stats",
+        lambda: {"current": 5.0, "peak": 5.0},
+    )
+    monkeypatch.setattr(pbr, "compute_ideal_orders_json", fake_compute)
+
+    _orders, snapshot = await bot.calc_ideal_orders_orchestrator(return_snapshot=True)
+
+    assert cm_calls == {"symbols": [symbol], "max_age_ms": 10_000}
+    assert captured["input"]["symbols"][0]["order_book"] == {"bid": 123.45, "ask": 123.45}
+    assert snapshot["orchestrator_input"]["symbols"][0]["order_book"] == {
+        "bid": 123.45,
+        "ask": 123.45,
+    }
+
+
 def test_hsl_halted_universe_keeps_managed_symbols_and_blocks_flat_candidates():
     cfg = _dummy_config()
     bot = _make_dummy_bot(cfg)

@@ -1,8 +1,12 @@
 import types
+from importlib import import_module
 
 import pytest
-import passivbot_rust as pbr
 from passivbot import Passivbot
+
+
+def _pbr():
+    return import_module("passivbot_rust")
 
 
 class OrchestrationBot(Passivbot):
@@ -43,8 +47,8 @@ class OrchestrationBot(Passivbot):
     def live_value(self, key: str):
         return self._live_values.get(key, 0.0)
 
-    async def _fetch_market_prices(self, symbols: set[str]) -> dict[str, float | None]:
-        return {symbol: self._market_prices.get(symbol) for symbol in symbols}
+    async def _fetch_market_prices(self, symbols: set[str]) -> dict[str, float]:
+        return {symbol: float(self._market_prices.get(symbol, 0.0) or 0.0) for symbol in symbols}
 
     async def calc_unstucking_close(self, allow_new_unstuck: bool = True):
         return "", (0.0, 0.0, "", 0)
@@ -67,7 +71,7 @@ def _make_order(
     reduce_only: bool = False,
     order_kind: str = "limit",
 ) -> dict:
-    order_type_id = pbr.order_type_snake_to_id(order_type)
+    order_type_id = _pbr().order_type_snake_to_id(order_type)
     return {
         "symbol": symbol,
         "side": side,
@@ -96,7 +100,7 @@ async def test_calc_orders_to_cancel_and_create_reconciles_orders(monkeypatch):
             "position_side": "long",
             "qty": 1.0,
             "price": 100.0,
-            "custom_id": f"order-0x{pbr.order_type_snake_to_id(matching_type):04x}",
+            "custom_id": f"order-0x{_pbr().order_type_snake_to_id(matching_type):04x}",
         },
         {
             "symbol": symbol,
@@ -138,7 +142,7 @@ async def test_calc_orders_to_cancel_and_create_reconciles_orders(monkeypatch):
 
     assert [order["custom_id"] for order in to_cancel] == ["order-0xdead"]
     assert [order["custom_id"] for order in to_create] == [
-        f"order-0x{pbr.order_type_snake_to_id(new_type):04x}"
+        f"order-0x{_pbr().order_type_snake_to_id(new_type):04x}"
     ]
 
 
@@ -149,7 +153,7 @@ def test_to_executable_orders_respects_rust_market_execution_hint():
     bot._live_values["market_orders_allowed"] = False
 
     order_type = "close_unstuck_long"
-    order_type_id = pbr.order_type_snake_to_id(order_type)
+    order_type_id = _pbr().order_type_snake_to_id(order_type)
     ideal = {symbol: [(-0.5, 100.0, order_type, order_type_id, "market")]}
 
     orders, _ = bot._to_executable_orders(ideal, {symbol: 100.0})
@@ -164,7 +168,7 @@ def test_to_executable_orders_respects_rust_limit_execution_hint():
     bot._live_values["market_orders_allowed"] = True
 
     order_type = "close_unstuck_long"
-    order_type_id = pbr.order_type_snake_to_id(order_type)
+    order_type_id = _pbr().order_type_snake_to_id(order_type)
     ideal = {symbol: [(-0.5, 100.0, order_type, order_type_id, "limit")]}
 
     orders, _ = bot._to_executable_orders(ideal, {symbol: 100.0})
@@ -186,7 +190,7 @@ async def test_order_hysteresis_skips_near_identical_cancel_create(monkeypatch):
             "position_side": "long",
             "qty": 1.0,
             "price": 100.0,
-            "custom_id": f"order-0x{pbr.order_type_snake_to_id('entry_grid_normal_long'):04x}",
+            "custom_id": f"order-0x{_pbr().order_type_snake_to_id('entry_grid_normal_long'):04x}",
         }
     ]
 
@@ -233,3 +237,71 @@ async def test_to_create_orders_sorted_by_market_diff(monkeypatch):
 
     assert not to_cancel
     assert [order["price"] for order in to_create] == [101.0, 95.0]
+
+
+@pytest.mark.asyncio
+async def test_calc_orders_to_cancel_and_create_raises_on_malformed_actual_order(monkeypatch):
+    symbol = "BTC/USDT"
+    bot = OrchestrationBot({symbol: 100.0})
+    bot.register_symbol(symbol)
+
+    bot.open_orders[symbol] = [
+        {
+            "symbol": symbol,
+            "side": "buy",
+            "position_side": "both",
+            "qty": 1.0,
+            "price": 100.0,
+            "custom_id": "order-0xdead",
+        }
+    ]
+
+    async def fake_calc_ideal_orders(self):
+        return {symbol: []}
+
+    bot.calc_ideal_orders = types.MethodType(fake_calc_ideal_orders, bot)
+
+    with pytest.raises(RuntimeError, match="Malformed open order"):
+        await bot.calc_orders_to_cancel_and_create()
+
+
+@pytest.mark.asyncio
+async def test_calc_orders_to_cancel_and_create_raises_when_tolerance_matching_hits_malformed_candidate(monkeypatch):
+    symbol = "BTC/USDT"
+    bot = OrchestrationBot({symbol: 100.0})
+    bot.register_symbol(symbol)
+    bot._live_values["order_match_tolerance_pct"] = 0.001
+
+    bot.open_orders[symbol] = [
+        {
+            "symbol": symbol,
+            "side": "buy",
+            "position_side": "long",
+            "qty": 1.0,
+            "price": 100.0,
+                "custom_id": f"order-0x{_pbr().order_type_snake_to_id('entry_grid_normal_long'):04x}",
+        }
+    ]
+
+    ideal = {
+        symbol: [
+            {
+                "symbol": symbol,
+                "side": "buy",
+                "position_side": "long",
+                "qty": 1.0,
+                "price": "bad-price",
+                "reduce_only": False,
+                "custom_id": f"order-0x{_pbr().order_type_snake_to_id('entry_grid_normal_long'):04x}",
+                "type": "limit",
+            }
+        ]
+    }
+
+    async def fake_calc_ideal_orders(self):
+        return ideal
+
+    bot.calc_ideal_orders = types.MethodType(fake_calc_ideal_orders, bot)
+
+    with pytest.raises(RuntimeError, match="Invalid price in order delta annotation"):
+        await bot.calc_orders_to_cancel_and_create()

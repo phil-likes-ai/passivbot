@@ -52,25 +52,56 @@ class OKXBot(CCXTBot):
 
     def _get_position_side_for_order(self, order: dict) -> str:
         """OKX provides posSide in info."""
-        return order.get("info", {}).get("posSide", "long").lower()
+        info = order.get("info", {})
+        if not isinstance(info, dict) or "posSide" not in info:
+            raise KeyError(f"{self.exchange}: missing posSide in open-order payload")
+        position_side = str(info["posSide"]).lower()
+        if position_side not in {"long", "short"}:
+            raise ValueError(
+                f"{self.exchange}: invalid posSide in open-order payload: {info['posSide']!r}"
+            )
+        return position_side
 
     def _normalize_positions(self, fetched: list) -> list:
         """OKX: Preserve live positions across both cross and isolated margin modes."""
         positions = []
         for elm in fetched:
-            contracts = float(elm.get("contracts", 0))
-            if contracts != 0:
-                normalized = {
-                    "symbol": elm["symbol"],
-                    "position_side": elm.get("side", "long").lower(),
-                    "size": contracts,
-                    "price": float(elm.get("entryPrice", 0)),
-                }
-                margin_mode = self._extract_live_margin_mode(elm)
-                if margin_mode is not None:
-                    normalized["margin_mode"] = margin_mode
-                    self._record_live_margin_mode(normalized["symbol"], margin_mode)
-                positions.append(normalized)
+            contracts = self._coerce_required_numeric_value(
+                elm["contracts"],
+                field="contracts",
+                symbol=elm.get("symbol"),
+                allow_zero=True,
+                payload_kind="position payload",
+            )
+            if contracts == 0.0:
+                continue
+            side_raw = elm.get("side")
+            if side_raw is None:
+                raise KeyError(
+                    f"{self.exchange}: missing side in position payload for {elm.get('symbol')}"
+                )
+            position_side = str(side_raw).lower()
+            if position_side not in {"long", "short"}:
+                raise ValueError(
+                    f"{self.exchange}: invalid side in position payload for {elm.get('symbol')}: {side_raw!r}"
+                )
+            normalized = {
+                "symbol": elm["symbol"],
+                "position_side": position_side,
+                "size": contracts,
+                "price": self._coerce_required_numeric_value(
+                    elm["entryPrice"],
+                    field="entryPrice",
+                    symbol=elm.get("symbol"),
+                    allow_zero=False,
+                    payload_kind="position payload",
+                ),
+            }
+            margin_mode = self._extract_live_margin_mode(elm)
+            if margin_mode is not None:
+                normalized["margin_mode"] = margin_mode
+                self._record_live_margin_mode(normalized["symbol"], margin_mode)
+            positions.append(normalized)
         return positions
 
     def _get_pnl_from_trade(self, trade: dict) -> float:

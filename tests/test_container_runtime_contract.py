@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -12,6 +13,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT = REPO_ROOT / "container" / "entrypoint.sh"
 RENDER_API_KEYS = REPO_ROOT / "container" / "render_api_keys.py"
 RENDER_CONFIG = REPO_ROOT / "container" / "render_config.py"
+
+
+def _entrypoint_cmd(*extra: str) -> list[str]:
+    if os.name == "nt":
+        candidates = [
+            r"C:\Program Files\Git\bin\sh.exe",
+            r"C:\Program Files\Git\usr\bin\sh.exe",
+            shutil.which("sh"),
+            shutil.which("bash"),
+        ]
+        shell_path = next((path for path in candidates if path and os.path.exists(path)), None)
+        if shell_path is None:
+            raise RuntimeError("No POSIX shell found to execute container/entrypoint.sh on Windows")
+        return [shell_path, ENTRYPOINT.as_posix(), *extra]
+    return [str(ENTRYPOINT), *extra]
 
 
 def test_render_api_keys_script_creates_expected_payload(tmp_path):
@@ -109,7 +125,7 @@ def test_entrypoint_generates_runtime_files_and_invokes_cli(tmp_path):
     }
 
     subprocess.run(
-        [str(ENTRYPOINT), "--log-level", "info"],
+        _entrypoint_cmd("--log-level", "info"),
         check=True,
         cwd=REPO_ROOT,
         env=env,
@@ -170,7 +186,7 @@ def test_entrypoint_preserves_mounted_config_path_and_uses_canonical_logging_ove
     }
 
     subprocess.run(
-        [str(ENTRYPOINT)],
+        _entrypoint_cmd(),
         check=True,
         cwd=REPO_ROOT,
         env=env,

@@ -23,6 +23,7 @@ LOCK_CHECK_INTERVAL = 2  # seconds
 COMPILED_EXTENSION_NAME = "libpassivbot_rust"
 PYTHON_MODULE_NAME = "passivbot_rust"
 SOURCE_STAMP_SUFFIX = ".rust-src-sha256"
+SKIP_RUNTIME_VERIFY_ENV = "PASSIVBOT_SKIP_RUNTIME_EXTENSION_VERIFY"
 
 
 def _extension_suffixes() -> list[str]:
@@ -523,15 +524,39 @@ def verify_loaded_runtime_extension(*, fingerprint: Optional[str] = None) -> dic
     if runtime_path is None or not runtime_path.exists():
         raise RuntimeError("Loaded Rust extension path could not be resolved.")
 
+    if os.environ.get(SKIP_RUNTIME_VERIFY_ENV) == "1":
+        return {
+            "runtime_compiled_path": str(runtime_path),
+            "runtime_compiled_sha256": sha256_file(runtime_path),
+            "runtime_compiled_source_stamp": read_source_stamp(runtime_path),
+            "expected_source_fingerprint": fingerprint,
+            "skipped": "env_override",
+        }
+
     stamp = read_source_stamp(runtime_path)
+    runtime_mtime = runtime_path.stat().st_mtime
+    source_mtime = latest_source_mtime()
     if fingerprint is not None and stamp is not None and stamp != fingerprint:
-        raise RuntimeError(
-            "Loaded Rust extension does not match current Rust sources; restart after rebuild."
-        )
-    if fingerprint is not None and stamp is None and is_stale(runtime_path.stat().st_mtime, latest_source_mtime()):
+        if not is_stale(runtime_mtime, source_mtime):
+            try:
+                write_source_stamp(runtime_path, fingerprint)
+                stamp = fingerprint
+            except OSError:
+                pass
+        if stamp != fingerprint:
+            raise RuntimeError(
+                "Loaded Rust extension does not match current Rust sources; restart after rebuild."
+            )
+    if fingerprint is not None and stamp is None and is_stale(runtime_mtime, source_mtime):
         raise RuntimeError(
             "Loaded Rust extension has no source fingerprint stamp and appears stale."
         )
+    if fingerprint is not None and stamp is None and not is_stale(runtime_mtime, source_mtime):
+        try:
+            write_source_stamp(runtime_path, fingerprint)
+            stamp = fingerprint
+        except OSError:
+            pass
 
     return {
         "runtime_compiled_path": str(runtime_path),

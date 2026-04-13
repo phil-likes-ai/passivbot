@@ -86,11 +86,33 @@ class BybitBot(CCXTBot):
         return elm
 
     def _normalize_position_page_item(self, elm: dict) -> dict | None:
+        side_raw = elm.get("side")
+        if side_raw is None:
+            raise KeyError(f"{self.exchange}: missing side in position payload for {elm.get('symbol')}")
+        position_side = str(side_raw).lower()
+        if position_side not in {"long", "short"}:
+            raise ValueError(
+                f"{self.exchange}: invalid side in position payload for {elm.get('symbol')}: {side_raw!r}"
+            )
+        size = self._coerce_required_numeric_value(
+            elm["contracts"],
+            field="contracts",
+            symbol=elm.get("symbol"),
+            allow_zero=True,
+            payload_kind="position payload",
+        )
+        price = self._coerce_required_numeric_value(
+            elm["entryPrice"],
+            field="entryPrice",
+            symbol=elm.get("symbol"),
+            allow_zero=abs(size) <= 0.0,
+            payload_kind="position payload",
+        )
         normalized = {
             "symbol": elm["symbol"],
-            "position_side": elm.get("side", "long").lower(),
-            "size": float(elm["contracts"]),
-            "price": float(elm["entryPrice"]),
+            "position_side": position_side,
+            "size": size,
+            "price": price,
         }
         margin_mode = self._extract_live_margin_mode(elm)
         if margin_mode is not None:
@@ -153,14 +175,30 @@ class BybitBot(CCXTBot):
                 if self._is_enabled_flag(elm.get("marginCollateral")) and self._is_enabled_flag(
                     elm.get("collateralSwitch")
                 ):
-                    balance += float(elm.get("usdValue") or 0.0) + float(
-                        elm.get("unrealisedPnl") or 0.0
+                    balance += self._coerce_required_numeric_value(
+                        elm.get("usdValue"),
+                        field="usdValue",
+                        symbol=self.quote,
+                        allow_zero=True,
+                        payload_kind="balance payload",
+                    ) + self._coerce_required_numeric_value(
+                        elm.get("unrealisedPnl"),
+                        field="unrealisedPnl",
+                        symbol=self.quote,
+                        allow_zero=True,
+                        payload_kind="balance payload",
                     )
         else:
             quote_payload = fetched_balance.get(self.quote)
             if not isinstance(quote_payload, dict) or "total" not in quote_payload:
                 raise KeyError(f"bybit: missing non-unified quote balance for {self.quote}")
-            balance = quote_payload["total"]
+            balance = self._coerce_required_numeric_value(
+                quote_payload["total"],
+                field="total",
+                symbol=self.quote,
+                allow_zero=True,
+                payload_kind="balance payload",
+            )
         return balance
 
     async def fetch_pnls_sub(

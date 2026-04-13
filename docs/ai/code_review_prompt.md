@@ -31,6 +31,20 @@ cd passivbot-rust && maturin develop --release && cd ..
 pytest
 ```
 
+## Critical Modernization Regression Bundle
+
+Use this targeted bundle before signing off modernization work in the repeatedly touched critical modules:
+
+```bash
+python -m pytest tests/test_fill_events_parse_utils.py
+python -m pytest tests/test_passivbot_exchange_config.py tests/test_exchange_config_updates.py
+python -m pytest tests/test_candlestick_manager_ccxt_utils.py tests/test_candlestick_manager_coverage_utils.py
+python -m pytest tests/test_fill_events_parse_utils.py tests/test_fill_events_model_utils.py tests/test_fill_events_coalesce_utils.py
+cd passivbot-rust && cargo check --tests && cd ..
+```
+
+Expand the targeted Python subset further when the touched slice lands in other `test_passivbot_*`, `test_candlestick_manager_*`, or `test_fill_events_*` modules.
+
 ## Targeted Smoke Backtest (When Relevant)
 
 Use a short window + one coin for fast review checks on order/risk/EMA/config-flow changes.

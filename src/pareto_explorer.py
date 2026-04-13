@@ -160,10 +160,10 @@ def _display_path(path: Path | str, *, base_dir: Path | None = None) -> str:
     search_bases.append(Path.cwd().resolve())
     for base in search_bases:
         try:
-            return str(resolved.relative_to(base))
+            return resolved.relative_to(base).as_posix()
         except ValueError:
             continue
-    return str(resolved)
+    return resolved.as_posix()
 
 
 def _render_key_value_box(rows: Sequence[tuple[str, str]]) -> List[str]:

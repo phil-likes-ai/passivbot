@@ -335,14 +335,32 @@ pub fn calc_unstucking_action(
 
         let wallet_exposure =
             calc_wallet_exposure(input.c_mult, balance, size_abs, input.position_price);
-        let allowance_multiplier = 1.0 + input.risk_we_excess_allowance_pct.max(0.0);
-        let effective_wel = input.wallet_exposure_limit * allowance_multiplier;
-
-        let unstuck_threshold = input.unstuck_threshold;
-        if unstuck_threshold < 0.0 {
+        if !wallet_exposure.is_finite() {
             continue;
         }
-        if effective_wel > 0.0 && wallet_exposure / effective_wel <= unstuck_threshold {
+        let allowance_multiplier = 1.0 + input.risk_we_excess_allowance_pct.max(0.0);
+        if !allowance_multiplier.is_finite() {
+            continue;
+        }
+        let effective_wel = input.wallet_exposure_limit * allowance_multiplier;
+        if !effective_wel.is_finite() || effective_wel <= 0.0 {
+            continue;
+        }
+
+        let unstuck_threshold = input.unstuck_threshold;
+        if !unstuck_threshold.is_finite() || unstuck_threshold < 0.0 {
+            continue;
+        }
+        if wallet_exposure / effective_wel <= unstuck_threshold {
+            continue;
+        }
+
+        let unstuck_close_pct = input.unstuck_close_pct.clamp(0.0, 1.0);
+        if !unstuck_close_pct.is_finite() || unstuck_close_pct <= 0.0 {
+            continue;
+        }
+
+        if !input.unstuck_ema_dist.is_finite() {
             continue;
         }
 
@@ -445,6 +463,7 @@ pub fn calc_unstucking_action(
         let min_entry_qty = calc_min_entry_qty(input.current_price, &exchange_params);
         let allowance_multiplier = 1.0 + input.risk_we_excess_allowance_pct.max(0.0);
         let effective_wel = input.wallet_exposure_limit * allowance_multiplier;
+        let unstuck_close_pct = input.unstuck_close_pct.clamp(0.0, 1.0);
 
         match input.side {
             LONG => {
@@ -453,7 +472,7 @@ pub fn calc_unstucking_action(
                     continue;
                 }
                 let target_qty = cost_to_qty(
-                    balance * effective_wel * input.unstuck_close_pct,
+                    balance * effective_wel * unstuck_close_pct,
                     input.current_price,
                     input.c_mult,
                 );
@@ -472,7 +491,10 @@ pub fn calc_unstucking_action(
                 if pnl_if_closed < 0.0 && pnl_abs > allowance {
                     let scaled_qty = close_qty.abs() * (allowance / pnl_abs);
                     let scaled_qty = f64::min(size_abs, scaled_qty);
-                    let scaled_qty = f64::max(min_entry_qty, round_dn(scaled_qty, input.qty_step));
+                    let scaled_qty = round_dn(scaled_qty, input.qty_step);
+                    if scaled_qty < min_entry_qty {
+                        continue;
+                    }
                     close_qty = -scaled_qty;
                 }
                 if close_qty == 0.0 {
@@ -494,7 +516,7 @@ pub fn calc_unstucking_action(
                     continue;
                 }
                 let target_qty = cost_to_qty(
-                    balance * effective_wel * input.unstuck_close_pct,
+                    balance * effective_wel * unstuck_close_pct,
                     input.current_price,
                     input.c_mult,
                 );
@@ -513,7 +535,10 @@ pub fn calc_unstucking_action(
                 if pnl_if_closed < 0.0 && pnl_abs > allowance {
                     let scaled_qty = close_qty * (allowance / pnl_abs);
                     let scaled_qty = f64::min(size_abs, scaled_qty);
-                    let scaled_qty = f64::max(min_entry_qty, round_dn(scaled_qty, input.qty_step));
+                    let scaled_qty = round_dn(scaled_qty, input.qty_step);
+                    if scaled_qty < min_entry_qty {
+                        continue;
+                    }
                     close_qty = scaled_qty;
                 }
                 if close_qty == 0.0 {
@@ -678,7 +703,8 @@ pub fn calc_twel_enforcer_actions(
             );
             continue;
         }
-        let per_position_twel_share = total_wallet_exposure_limit / (effective_n_positions as f64);
+        let dynamic_n_positions = effective_n_positions.min(positions.len()).max(1);
+        let per_position_twel_share = total_wallet_exposure_limit / (dynamic_n_positions as f64);
         let floor_exposure = base_limit.min(per_position_twel_share.max(0.0));
         if exposure <= floor_exposure + 1e-9 {
             continue;
@@ -984,6 +1010,49 @@ mod tests {
         }
     }
 
+    fn unstuck_input(
+        idx: usize,
+        side: usize,
+        position_size: f64,
+        position_price: f64,
+        current_price: f64,
+    ) -> UnstuckPositionInput {
+        UnstuckPositionInput {
+            idx,
+            side,
+            position_size,
+            position_price,
+            wallet_exposure_limit: 0.5,
+            risk_we_excess_allowance_pct: 0.0,
+            unstuck_threshold: 0.5,
+            unstuck_close_pct: 0.25,
+            unstuck_ema_dist: 0.0,
+            ema_band_upper: current_price,
+            ema_band_lower: current_price,
+            current_price,
+            price_step: 0.1,
+            qty_step: 0.1,
+            min_qty: 0.1,
+            min_cost: 0.0,
+            c_mult: 1.0,
+        }
+    }
+
+    #[test]
+    fn test_exposure_to_psize_returns_expected_value_for_valid_inputs() {
+        let result = exposure_to_psize(0.5, 1000.0, 50.0, 1.0);
+        assert!((result - 10.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_exposure_to_psize_returns_zero_for_non_positive_inputs() {
+        assert_eq!(exposure_to_psize(0.0, 1000.0, 50.0, 1.0), 0.0);
+        assert_eq!(exposure_to_psize(-1.0, 1000.0, 50.0, 1.0), 0.0);
+        assert_eq!(exposure_to_psize(0.5, 0.0, 50.0, 1.0), 0.0);
+        assert_eq!(exposure_to_psize(0.5, 1000.0, 0.0, 1.0), 0.0);
+        assert_eq!(exposure_to_psize(0.5, 1000.0, 50.0, 0.0), 0.0);
+    }
+
     #[test]
     fn test_twel_reducer_basic_two_positions() {
         // Two long positions, each exposure > WEL_base; total exceeds TWEL_target.
@@ -1196,5 +1265,142 @@ mod tests {
         assert_eq!(gated.len(), 1);
         assert!((gated[0].qty - 4.0).abs() < 1e-12);
         assert!((gated[0].price - 100.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_gate_entries_returns_empty_for_non_positive_balance_or_limit() {
+        let positions = vec![gate_pos(0, 1.0, 100.0, 1.0)];
+        let entries = vec![gate_entry(
+            0,
+            1.0,
+            100.0,
+            100.0,
+            0.01,
+            0.0,
+            0.0,
+            1.0,
+            OrderType::EntryGridNormalLong,
+        )];
+
+        assert!(gate_entries_by_twel(LONG, 0.0, 1.0, &positions, &entries).is_empty());
+        assert!(gate_entries_by_twel(LONG, 1000.0, 0.0, &positions, &entries).is_empty());
+    }
+
+    #[test]
+    fn test_gate_entries_skips_invalid_position_and_candidate_inputs() {
+        let positions = vec![gate_pos(0, 1.0, 0.0, 1.0)];
+        let entries = vec![
+            gate_entry(
+                0,
+                1.0,
+                0.0,
+                100.0,
+                0.01,
+                0.0,
+                0.0,
+                1.0,
+                OrderType::EntryGridNormalLong,
+            ),
+            gate_entry(
+                0,
+                0.0,
+                100.0,
+                100.0,
+                0.01,
+                0.0,
+                0.0,
+                1.0,
+                OrderType::EntryGridNormalLong,
+            ),
+        ];
+
+        let gated = gate_entries_by_twel(LONG, 1000.0, 1.0, &positions, &entries);
+        assert!(
+            gated.is_empty(),
+            "invalid price/qty inputs should be ignored safely"
+        );
+    }
+
+    #[test]
+    fn test_twel_reducer_uses_dynamic_denominator_for_active_positions() {
+        let balance = 1000.0;
+        let twel = 1.0;
+        let positions = vec![
+            pos(0, 12.0, 50.0, 50.0, 0.6, 1.0, 0.1, 0.1, 0.1, 0.0),
+            pos(1, 12.0, 50.0, 49.0, 0.6, 1.0, 0.1, 0.1, 0.1, 0.0),
+        ];
+
+        let actions = calc_twel_enforcer_actions(LONG, 1.0, twel, 10, balance, &positions, None);
+        assert!(!actions.is_empty());
+
+        let mut psize = vec![12.0, 12.0];
+        for (idx, order) in actions {
+            psize[idx] = (psize[idx] - order.qty.abs()).max(0.0);
+        }
+
+        let exposures: Vec<f64> = psize
+            .iter()
+            .map(|size| calc_wallet_exposure(1.0, balance, *size, 50.0))
+            .collect();
+        assert!(exposures.iter().all(|exp| *exp >= 0.5 - 1e-9));
+        assert!(exposures.iter().sum::<f64>() <= twel + 1e-12);
+    }
+
+    #[test]
+    fn test_calc_unstucking_action_skips_non_finite_guard_inputs() {
+        let mut input = unstuck_input(0, LONG, 10.0, 100.0, 110.0);
+        input.wallet_exposure_limit = f64::NAN;
+        assert!(calc_unstucking_action(1000.0, 10.0, 10.0, &[input.clone()]).is_none());
+
+        input.wallet_exposure_limit = 0.5;
+        input.unstuck_ema_dist = f64::NAN;
+        assert!(calc_unstucking_action(1000.0, 10.0, 10.0, &[input.clone()]).is_none());
+
+        input.unstuck_ema_dist = 0.0;
+        input.unstuck_close_pct = f64::NAN;
+        assert!(calc_unstucking_action(1000.0, 10.0, 10.0, &[input]).is_none());
+    }
+
+    #[test]
+    fn test_calc_unstucking_action_clamps_close_pct_to_position_size() {
+        let mut input = unstuck_input(0, LONG, 2.0, 100.0, 110.0);
+        input.unstuck_close_pct = 5.0;
+        input.unstuck_threshold = 0.1;
+
+        let action = calc_unstucking_action(1000.0, 100.0, 100.0, &[input]).expect("action");
+        assert_eq!(action.0, 0);
+        assert_eq!(action.1, LONG);
+        assert!(action.2.qty.abs() <= 2.0 + 1e-12);
+        assert_eq!(action.2.order_type, OrderType::CloseUnstuckLong);
+    }
+
+    #[test]
+    fn test_calc_unstucking_action_skips_when_loss_allowance_cannot_cover_min_qty() {
+        let mut input = unstuck_input(0, LONG, 2.0, 100.0, 90.0);
+        input.ema_band_upper = 80.0;
+        input.unstuck_threshold = 0.1;
+        input.min_qty = 0.5;
+        input.qty_step = 0.1;
+
+        let action = calc_unstucking_action(1000.0, 1.0, 1.0, &[input]);
+        assert!(
+            action.is_none(),
+            "should not force a minimum-qty close that violates allowance"
+        );
+    }
+
+    #[test]
+    fn test_calc_unstucking_action_prefers_most_stuck_position() {
+        let mut worse = unstuck_input(0, LONG, 5.0, 100.0, 110.0);
+        worse.ema_band_upper = 100.0;
+        let mut less_stuck = unstuck_input(1, LONG, 5.0, 100.0, 101.0);
+        less_stuck.ema_band_upper = 100.0;
+
+        let action =
+            calc_unstucking_action(1000.0, 100.0, 100.0, &[less_stuck.clone(), worse.clone()])
+                .expect("action");
+        assert_eq!(action.0, 0);
+        assert_eq!(action.1, LONG);
+        assert_eq!(action.2.order_type, OrderType::CloseUnstuckLong);
     }
 }

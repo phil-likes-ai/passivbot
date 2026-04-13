@@ -12,6 +12,14 @@ except ValueError:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+venv_sites = [
+    Path(__file__).resolve().parents[2] / "venv" / "Lib" / "site-packages",
+    Path(__file__).resolve().parents[2] / "venv" / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages",
+]
+for site in venv_sites:
+    if site.exists() and str(site) not in sys.path:
+        sys.path.insert(0, str(site))
+
 from trailing_diagnostics_tool import build_parser, run_interactive
 
 

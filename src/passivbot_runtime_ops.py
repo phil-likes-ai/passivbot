@@ -3,9 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from importlib import import_module
 
 from config.access import get_optional_live_value
+from passivbot_format_utils import format_duration as format_duration_static
 from utils import utc_ms
+
+
+_ORIGINAL_UTC_MS = utc_ms
 
 
 def set_log_silence_watchdog_context(self, *, phase=None, stage=None) -> None:
@@ -23,6 +28,8 @@ def maybe_log_silence_watchdog(self, *, now_monotonic=None) -> bool:
         now_monotonic = time.monotonic()
 
     tracker = getattr(self, "get_last_log_activity_monotonic", None)
+    if not callable(tracker):
+        tracker = getattr(import_module("passivbot"), "get_last_log_activity_monotonic", None)
     if callable(tracker):
         try:
             tracked_value = tracker()
@@ -55,7 +62,7 @@ def maybe_log_silence_watchdog(self, *, now_monotonic=None) -> bool:
         silent_for_s,
         phase,
         stage,
-        self._format_duration(uptime_ms),
+        getattr(type(self), "_format_duration", format_duration_static)(uptime_ms),
         loop_str,
     )
     return True
@@ -154,6 +161,14 @@ def maybe_log_health_summary(self) -> None:
 def get_exchange_time(self):
     """Return current exchange time in milliseconds."""
     del self
+    try:
+        if utc_ms is not _ORIGINAL_UTC_MS:
+            return utc_ms()
+        passivbot_utc_ms = getattr(import_module("passivbot"), "utc_ms", None)
+        if callable(passivbot_utc_ms) and passivbot_utc_ms is not _ORIGINAL_UTC_MS:
+            return passivbot_utc_ms()
+    except Exception:
+        pass
     return utc_ms()
 
 

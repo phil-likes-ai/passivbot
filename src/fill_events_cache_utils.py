@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict, Sequence
+from typing import Dict, Mapping, Sequence
 
 
 def _format_ms(ts):
@@ -101,7 +101,7 @@ def save_events(self, events: Sequence, day_key_fn) -> None:
     save_days(self, day_map)
 
 
-def save_days(self, day_events: Dict[str, Sequence]) -> None:
+def save_days(self, day_events: Mapping[str, Sequence]) -> None:
     for day, events in day_events.items():
         path = self.root / f"{day}.json"
         payload = [event.to_dict() for event in sorted(events, key=lambda ev: ev.timestamp)]
@@ -158,6 +158,7 @@ def mark_covered_start(self, start_ts: int) -> None:
     if current == 0 or start_ts < current:
         metadata["covered_start_ms"] = start_ts
     metadata["last_refresh_ms"] = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+    self.save_metadata(metadata)
 
 
 def get_history_scope(self) -> str:

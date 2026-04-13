@@ -57,7 +57,20 @@ def _calc_monitor_pnl(position_side, entry_price, close_price, qty, c_mult):
             return pbr.calc_pnl_short(entry_price, close_price, qty, c_mult)
         return pbr.calc_pnl_long(entry_price, close_price, qty, c_mult)
     except Exception:
-        raise
+        qty_abs = abs(float(qty))
+        if isinstance(position_side, str) and position_side == "short":
+            return (float(entry_price) - float(close_price)) * qty_abs * float(c_mult)
+        return (float(close_price) - float(entry_price)) * qty_abs * float(c_mult)
+
+
+def _calc_monitor_price_action_distance(position_side, entry_price, current_price):
+    entry_price = float(entry_price)
+    current_price = float(current_price)
+    if entry_price <= 0.0 or current_price <= 0.0:
+        return 0.0
+    if str(position_side).lower() == "short":
+        return round(float(current_price / entry_price - 1.0), 3)
+    return round(float(entry_price / current_price - 1.0), 3)
 
 
 def _normalize_higher_is_better(values: list[float]) -> list[float]:
@@ -1071,9 +1084,7 @@ def _build_monitor_position_side_payload(
         payload["price_action_distance"] = 0.0
         payload["upnl"] = 0.0
         return payload
-    payload["price_action_distance"] = float(
-        pbr.calc_pprice_diff_int(self.pside_int_map[pside], price, last_price)
-    )
+    payload["price_action_distance"] = _calc_monitor_price_action_distance(pside, price, last_price)
     payload["upnl"] = float(_calc_monitor_pnl(pside, price, last_price, size, self.c_mults[symbol]))
     return payload
 

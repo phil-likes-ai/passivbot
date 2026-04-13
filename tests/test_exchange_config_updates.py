@@ -6,7 +6,7 @@ from ccxt.base.errors import RateLimitExceeded
 
 @pytest.mark.asyncio
 async def test_update_exchange_configs_marks_only_successful_symbols(monkeypatch):
-    import passivbot as pb_mod
+    import passivbot_exchange_config as pb_exchange_config
 
     class FakeBot:
         exchange = "bybit"
@@ -25,17 +25,18 @@ async def test_update_exchange_configs_marks_only_successful_symbols(monkeypatch
             if symbol == "A":
                 raise Exception("boom")
 
-        _is_rate_limit_like_exception = pb_mod.Passivbot._is_rate_limit_like_exception
-        _exchange_config_backoff_seconds = pb_mod.Passivbot._exchange_config_backoff_seconds
-        _exchange_config_success_pause_seconds = pb_mod.Passivbot._exchange_config_success_pause_seconds
+        _is_rate_limit_like_exception = pb_exchange_config.is_rate_limit_like_exception
+        _exchange_config_backoff_seconds = pb_exchange_config.exchange_config_backoff_seconds
+        _exchange_config_success_pause_seconds = pb_exchange_config.exchange_config_success_pause_seconds
+        _update_single_symbol_exchange_config = pb_exchange_config.update_single_symbol_exchange_config
 
     async def fake_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(pb_exchange_config.asyncio, "sleep", fake_sleep)
 
     bot = FakeBot()
-    await pb_mod.Passivbot.update_exchange_configs(bot)
+    await pb_exchange_config.update_exchange_configs(bot)
 
     assert bot.calls == ["A", "B"]
     assert bot.already_updated_exchange_config_symbols == {"B"}
@@ -46,7 +47,7 @@ async def test_update_exchange_configs_marks_only_successful_symbols(monkeypatch
 
 @pytest.mark.asyncio
 async def test_update_exchange_configs_rate_limit_breaks_and_defers_remaining(monkeypatch):
-    import passivbot as pb_mod
+    import passivbot_exchange_config as pb_exchange_config
 
     class FakeBot:
         exchange = "bybit"
@@ -65,17 +66,18 @@ async def test_update_exchange_configs_rate_limit_breaks_and_defers_remaining(mo
             if symbol == "A":
                 raise RateLimitExceeded("bybit retCode 10006 rate limit")
 
-        _is_rate_limit_like_exception = pb_mod.Passivbot._is_rate_limit_like_exception
-        _exchange_config_backoff_seconds = pb_mod.Passivbot._exchange_config_backoff_seconds
-        _exchange_config_success_pause_seconds = pb_mod.Passivbot._exchange_config_success_pause_seconds
+        _is_rate_limit_like_exception = pb_exchange_config.is_rate_limit_like_exception
+        _exchange_config_backoff_seconds = pb_exchange_config.exchange_config_backoff_seconds
+        _exchange_config_success_pause_seconds = pb_exchange_config.exchange_config_success_pause_seconds
+        _update_single_symbol_exchange_config = pb_exchange_config.update_single_symbol_exchange_config
 
     async def fake_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(pb_exchange_config.asyncio, "sleep", fake_sleep)
 
     bot = FakeBot()
-    await pb_mod.Passivbot.update_exchange_configs(bot)
+    await pb_exchange_config.update_exchange_configs(bot)
 
     assert bot.calls == ["A"]
     assert bot.already_updated_exchange_config_symbols == set()
@@ -86,7 +88,7 @@ async def test_update_exchange_configs_rate_limit_breaks_and_defers_remaining(mo
 
 @pytest.mark.asyncio
 async def test_update_exchange_configs_retries_failed_symbol_after_backoff(monkeypatch):
-    import passivbot as pb_mod
+    import passivbot_exchange_config as pb_exchange_config
 
     now_ms = 1_000_000
 
@@ -107,30 +109,31 @@ async def test_update_exchange_configs_retries_failed_symbol_after_backoff(monke
             if len(self.calls) == 1:
                 raise Exception("boom")
 
-        _is_rate_limit_like_exception = pb_mod.Passivbot._is_rate_limit_like_exception
-        _exchange_config_backoff_seconds = pb_mod.Passivbot._exchange_config_backoff_seconds
-        _exchange_config_success_pause_seconds = pb_mod.Passivbot._exchange_config_success_pause_seconds
+        _is_rate_limit_like_exception = pb_exchange_config.is_rate_limit_like_exception
+        _exchange_config_backoff_seconds = pb_exchange_config.exchange_config_backoff_seconds
+        _exchange_config_success_pause_seconds = pb_exchange_config.exchange_config_success_pause_seconds
+        _update_single_symbol_exchange_config = pb_exchange_config.update_single_symbol_exchange_config
 
     async def fake_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
-    monkeypatch.setattr(pb_mod, "utc_ms", lambda: now_ms)
-    monkeypatch.setattr(pb_mod.random, "uniform", lambda a, b: 0.0)
+    monkeypatch.setattr(pb_exchange_config.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(pb_exchange_config, "utc_ms", lambda: now_ms)
+    monkeypatch.setattr(pb_exchange_config.random, "uniform", lambda a, b: 0.0)
 
     bot = FakeBot()
-    await pb_mod.Passivbot.update_exchange_configs(bot)
+    await pb_exchange_config.update_exchange_configs(bot)
 
     assert bot.calls == ["A"]
     assert bot.already_updated_exchange_config_symbols == set()
     assert bot._exchange_config_retry_attempts["A"] == 1
     assert bot._exchange_config_retry_after_ms["A"] == now_ms + 5000
 
-    await pb_mod.Passivbot.update_exchange_configs(bot)
+    await pb_exchange_config.update_exchange_configs(bot)
     assert bot.calls == ["A"]
 
     now_ms += 5001
-    await pb_mod.Passivbot.update_exchange_configs(bot)
+    await pb_exchange_config.update_exchange_configs(bot)
 
     assert bot.calls == ["A", "A"]
     assert bot.already_updated_exchange_config_symbols == {"A"}

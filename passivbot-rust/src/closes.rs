@@ -253,7 +253,12 @@ pub fn calc_grid_close_long(
         position.size,
         position.price,
     );
-    let wallet_exposure_ratio = wallet_exposure / wallet_exposure_limit_with_allowance(bot_params);
+    let allowed_wallet_exposure = wallet_exposure_limit_with_allowance(bot_params);
+    let wallet_exposure_ratio = if allowed_wallet_exposure > 0.0 {
+        wallet_exposure / allowed_wallet_exposure
+    } else {
+        f64::INFINITY
+    };
     let close_price = if wallet_exposure_ratio > 1.0 {
         f64::max(
             state_params.order_book.ask,
@@ -541,12 +546,17 @@ pub fn calc_grid_close_short(
     let n_steps =
         ((close_prices_start - close_prices_end).abs() / exchange_params.price_step).ceil();
     let close_grid_qty_pct_modified = f64::max(bot_params.close_grid_qty_pct, 1.0 / n_steps);
-    let wallet_exposure_ratio = calc_wallet_exposure(
-        exchange_params.c_mult,
-        state_params.balance,
-        position_size_abs,
-        position.price,
-    ) / wallet_exposure_limit_with_allowance(bot_params);
+    let allowed_wallet_exposure = wallet_exposure_limit_with_allowance(bot_params);
+    let wallet_exposure_ratio = if allowed_wallet_exposure > 0.0 {
+        calc_wallet_exposure(
+            exchange_params.c_mult,
+            state_params.balance,
+            position_size_abs,
+            position.price,
+        ) / allowed_wallet_exposure
+    } else {
+        f64::INFINITY
+    };
     let close_price = if wallet_exposure_ratio > 1.0 {
         f64::min(
             state_params.order_book.bid,
@@ -794,6 +804,126 @@ pub fn calc_next_close_short(
                 &trailing_price_bundle,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_wel_enforcer {
+    use super::*;
+    use crate::types::{
+        BotParams, EMABands, OrderBook, Position, StateParams, TrailingPriceBundle,
+    };
+
+    fn exchange() -> ExchangeParams {
+        ExchangeParams {
+            qty_step: 0.1,
+            price_step: 0.1,
+            min_qty: 0.1,
+            min_cost: 0.0,
+            c_mult: 1.0,
+            ..Default::default()
+        }
+    }
+
+    fn bot() -> BotParams {
+        BotParams {
+            wallet_exposure_limit: 0.5,
+            risk_wel_enforcer_threshold: 0.8,
+            close_grid_qty_pct: 0.25,
+            ..Default::default()
+        }
+    }
+
+    fn state() -> StateParams {
+        StateParams {
+            balance: 1000.0,
+            order_book: OrderBook {
+                bid: 99.0,
+                ask: 101.0,
+            },
+            ema_bands: EMABands {
+                upper: 101.0,
+                lower: 99.0,
+            },
+            entry_volatility_logrange_ema_1h: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_calc_next_close_long_emits_wel_auto_reduce_when_exposure_too_high() {
+        let order = calc_next_close_long(
+            &exchange(),
+            &state(),
+            &bot(),
+            &Position {
+                size: 8.0,
+                price: 100.0,
+            },
+            &TrailingPriceBundle::default(),
+        );
+        assert_eq!(order.order_type, OrderType::CloseAutoReduceWelLong);
+        assert!(order.qty < 0.0);
+    }
+
+    #[test]
+    fn test_calc_next_close_short_emits_wel_auto_reduce_when_exposure_too_high() {
+        let order = calc_next_close_short(
+            &exchange(),
+            &state(),
+            &bot(),
+            &Position {
+                size: -8.0,
+                price: 100.0,
+            },
+            &TrailingPriceBundle::default(),
+        );
+        assert_eq!(order.order_type, OrderType::CloseAutoReduceWelShort);
+        assert!(order.qty > 0.0);
+    }
+
+    #[test]
+    fn test_calc_close_qty_does_not_leave_dust_smaller_than_min_entry_qty() {
+        let qty = calc_close_qty(
+            &exchange(),
+            &bot(),
+            &Position {
+                size: 1.0,
+                price: 100.0,
+            },
+            0.95,
+            1000.0,
+            101.0,
+        );
+        assert!((qty - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_grid_closes_handle_zero_wallet_exposure_limit_without_dividing() {
+        let mut bot = bot();
+        bot.wallet_exposure_limit = 0.0;
+        let long_order = calc_grid_close_long(
+            &exchange(),
+            &state(),
+            &bot,
+            &Position {
+                size: 1.0,
+                price: 100.0,
+            },
+        );
+        let short_order = calc_grid_close_short(
+            &exchange(),
+            &state(),
+            &bot,
+            &Position {
+                size: -1.0,
+                price: 100.0,
+            },
+        );
+
+        assert_eq!(long_order.order_type, OrderType::CloseGridLong);
+        assert_eq!(short_order.order_type, OrderType::CloseGridShort);
+        assert!(long_order.price > 0.0);
+        assert!(short_order.price > 0.0);
     }
 }
 

@@ -49,6 +49,7 @@ import passivbot_debug_utils as pb_debug_utils
 import passivbot_exchange_config as pb_exchange_config
 import passivbot_execution as pb_execution
 import passivbot_exposure_utils as pb_exposure_utils
+import passivbot_fill_event_utils as pb_fill_event_utils
 import passivbot_fetch_budget_utils as pb_fetch_budget_utils
 import passivbot_format_utils as pb_format_utils
 import passivbot_hook_utils as pb_hook_utils
@@ -684,11 +685,13 @@ class Passivbot:
             return total
         return 0.0
 
-    def _equity_hard_stop_realized_pnl_now(self) -> float:
+    def _equity_hard_stop_realized_pnl_now(self, pside: Optional[str] = None) -> float:
         if self._pnls_manager is None:
             return 0.0
         realized = 0.0
         for event in self._pnls_manager.get_events():
+            if pside is not None and self._equity_hard_stop_fill_pside(event) != pside:
+                continue
             realized += float(getattr(event, "pnl", 0.0) or 0.0)
             realized += self._equity_hard_stop_fee_cost(event)
         return realized
@@ -1535,6 +1538,25 @@ class Passivbot:
             boot_stage = stage
 
         try:
+            maybe_apply_boot_stagger = getattr(self, "_maybe_apply_boot_stagger", None)
+            if maybe_apply_boot_stagger is None:
+                async def maybe_apply_boot_stagger():
+                    await pb_startup_utils.maybe_apply_boot_stagger(self)
+
+            run_startup_preloop = getattr(self, "_run_startup_preloop", None)
+            if run_startup_preloop is None:
+                async def run_startup_preloop(set_stage):
+                    return await pb_startup_utils.run_startup_preloop(self, set_stage)
+
+            finalize_startup_ready = getattr(self, "_finalize_startup_ready", None)
+            if finalize_startup_ready is None:
+                async def finalize_startup_ready():
+                    await pb_startup_utils.finalize_startup_ready(self)
+
+            handle_startup_error = getattr(self, "_handle_startup_error", None)
+            if handle_startup_error is None:
+                async def handle_startup_error(exc, stage):
+                    await pb_startup_utils.handle_startup_error(self, exc, stage)
             self._monitor_record_event(
                 "bot.start",
                 ("bot", "lifecycle", "start"),
@@ -1549,21 +1571,25 @@ class Passivbot:
             )
 
             boot_stage = "boot_stagger"
-            await self._maybe_apply_boot_stagger()
+            await maybe_apply_boot_stagger()
 
-            if not await self._run_startup_preloop(set_boot_stage):
+            if not await run_startup_preloop(set_boot_stage):
                 return
 
-            await self._finalize_startup_ready()
+            await finalize_startup_ready()
         except Exception as exc:
-            await self._handle_startup_error(exc, boot_stage)
+            await handle_startup_error(exc, boot_stage)
             raise
 
     async def init_markets(self, verbose=True):
         """Load exchange market metadata and refresh approval lists."""
         # called at bot startup and once an hour thereafter
         self.init_markets_last_update_ms = utc_ms()
-        await self._ensure_exchange_config_ready_for_market_init()
+        ensure_exchange_config_ready = getattr(self, "_ensure_exchange_config_ready_for_market_init", None)
+        if ensure_exchange_config_ready is None:
+            async def ensure_exchange_config_ready():
+                await pb_market_init_utils.ensure_exchange_config_ready_for_market_init(self)
+        await ensure_exchange_config_ready()
         # Reuse existing ccxt session when available (ensures shared options such as fetchMarkets types).
         cc_instance = getattr(self, "cca", None)
         self.markets_dict = await load_markets(
@@ -1573,11 +1599,19 @@ class Passivbot:
         eligible, _, reasons = filter_markets(
             self.markets_dict, self.exchange, quote=self.quote, verbose=verbose
         )
-        self._apply_loaded_markets(self.markets_dict, eligible, reasons)
+        apply_loaded_markets = getattr(self, "_apply_loaded_markets", None)
+        if apply_loaded_markets is None:
+            pb_market_init_utils.apply_loaded_markets(self, self.markets_dict, eligible, reasons)
+        else:
+            apply_loaded_markets(self.markets_dict, eligible, reasons)
         # await self.init_flags()
         # await self.update_tickers()
         # self.set_live_configs()
-        await self._apply_post_market_load_setup()
+        post_market_load_setup = getattr(self, "_apply_post_market_load_setup", None)
+        if post_market_load_setup is None:
+            await pb_market_init_utils.apply_post_market_load_setup(self)
+        else:
+            await post_market_load_setup()
 
     def _resolve_live_warmup_float(
         self,
@@ -1620,7 +1654,6 @@ class Passivbot:
         if max_value is not None and value > max_value:
             raise RuntimeError(f"live.{key} must be <= {max_value} during warmup, got {value!r}")
         return value
-
 
     async def warmup_candles_staggered(
         self,
@@ -2184,17 +2217,18 @@ class Passivbot:
             return False
 
         # Build task list: open_orders and fill events (pnls)
-        tasks = [
-            self.update_open_orders(),
-            self.update_pnls(),
-        ]
+        async def _run_named_update(name, coro):
+            try:
+                return await coro
+            except Exception as exc:
+                raise RuntimeError(f"{name} failed during update_pos_oos_pnls_ohlcvs") from exc
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        open_orders_ok, pnls_ok = await asyncio.gather(
+            _run_named_update("update_open_orders", self.update_open_orders()),
+            _run_named_update("update_pnls", self.update_pnls()),
+        )
 
-        open_orders_ok = results[0] is True
-        pnls_ok = results[1] is True
-
-        if not open_orders_ok or not pnls_ok:
+        if open_orders_ok is not True or pnls_ok is not True:
             return False
         if self.stop_signal_received:
             return False
@@ -2281,6 +2315,8 @@ class Passivbot:
     async def execute_orders_parent(self, orders: [dict]) -> [dict]:
         """Submit a batch of orders after throttling and bookkeeping."""
         orders = orders[: int(self.live_value("max_n_creations_per_batch"))]
+        if not orders:
+            return []
         grouped_orders: dict[str, list[dict]] = defaultdict(list)
         for order in orders:
             self.add_to_recent_order_executions(order)
@@ -2294,20 +2330,20 @@ class Passivbot:
             grouped_orders[order["symbol"]].append(order)
         self._log_order_action_summary(grouped_orders, "post")
         res = await self.execute_orders(orders)
-        if not res:
-            return
+        if res in [None, False]:
+            raise RuntimeError(f"execute_orders returned invalid result {res!r}")
+        if not isinstance(res, list):
+            raise TypeError(f"execute_orders returned non-list result {type(res).__name__}")
         if len(orders) != len(res):
-            print(
-                f"debug unequal lengths execute_orders_parent: "
-                f"{len(orders)} orders, {len(res)} executions",
-                res,
+            raise RuntimeError(
+                f"execute_orders returned {len(res)} executions for {len(orders)} orders"
             )
-            return []
         to_return = []
         for ex, order in zip(res, orders):
             if not self.did_create_order(ex):
-                print(f"debug did_create_order false {ex}")
-                continue
+                raise RuntimeError(
+                    f"execute_orders returned unacknowledged result for {order['symbol']}: {ex!r}"
+                )
             debug_prints = {}
             for key in order:
                 if key not in ex:
@@ -2335,6 +2371,8 @@ class Passivbot:
     async def execute_cancellations_parent(self, orders: [dict]) -> [dict]:
         """Submit a batch of cancellations, prioritising reduce-only orders."""
         max_cancellations = int(self.live_value("max_n_cancellations_per_batch"))
+        if not orders:
+            return []
         if len(orders) > max_cancellations:
             # prioritize cancelling reduce-only orders
             try:
@@ -2359,22 +2397,25 @@ class Passivbot:
             grouped_orders[order["symbol"]].append(order)
         self._log_order_action_summary(grouped_orders, "cancel")
         res = await self.execute_cancellations(orders)
+        if res in [None, False]:
+            raise RuntimeError(f"execute_cancellations returned invalid result {res!r}")
+        if not isinstance(res, list):
+            raise TypeError(
+                f"execute_cancellations returned non-list result {type(res).__name__}"
+            )
         to_return = []
         if len(orders) != len(res):
-            self.execution_scheduled = True
             for od in orders:
                 self.state_change_detected_by_symbol.add(od["symbol"])
-            print(
-                f"debug unequal lengths execute_cancellations_parent: "
-                f"{len(orders)} orders, {len(res)} executions",
-                res,
+            raise RuntimeError(
+                f"execute_cancellations returned {len(res)} executions for {len(orders)} orders"
             )
-            return []
         for ex, od in zip(res, orders):
             if not self.did_cancel_order(ex, od):
                 self.state_change_detected_by_symbol.add(od["symbol"])
-                print(f"debug did_cancel_order false {ex} {od}")
-                continue
+                raise RuntimeError(
+                    f"execute_cancellations returned unacknowledged result for {od['symbol']}: {ex!r}"
+                )
             debug_prints = {}
             for key in od:
                 if key not in ex:
@@ -3052,12 +3093,12 @@ class Passivbot:
         if self.stop_signal_received:
             return False
 
-        await self.init_pnls()  # will do nothing if already initiated
-
-        if self._pnls_manager is None:
-            return False
-
         try:
+            await self.init_pnls()  # will do nothing if already initiated
+
+            if self._pnls_manager is None:
+                raise RuntimeError("FillEventsManager unavailable after init_pnls")
+
             # Use the same lookback window
             lookback = parse_pnls_max_lookback_days(
                 self.live_value("pnls_max_lookback_days"),
@@ -3164,141 +3205,23 @@ class Passivbot:
             logging.error("[fills] Failed to update FillEventsManager: %s", e)
             if self.logging_level >= 2:
                 traceback.print_exc()
-            return False
+            raise
 
     # -------------------------------------------------------------------------
     # FillEventsManager Helpers
     # -------------------------------------------------------------------------
 
     def _log_fill_event(self, event) -> str:
-        """Format a FillEvent for logging.
-
-        Format: [fill] BTC long entry +0.001 @ 100000.00 id=abc123
-        For closes: [fill] BTC long close -0.001 @ 100500.00, pnl=+5.50 USDT id=abc123
-        For unknown orders: [fill] BTC long unknown -0.2 @ 2.05, pnl=-0.005 USDT (coid=abc123) id=xyz789
-        """
-        coin = symbol_to_coin(event.symbol, verbose=False) or event.symbol
-        pside = event.position_side.lower()
-        order_type = event.pb_order_type.lower() if event.pb_order_type else "fill"
-
-        # Format qty with sign (+ for buys, - for sells)
-        qty_sign = "+" if event.side.lower() == "buy" else "-"
-        qty_str = f"{qty_sign}{abs(event.qty):.6g}"
-
-        # Include timestamp to make historical fills obvious in logs
-        fill_ts = ""
-        if getattr(event, "timestamp", 0):
-            fill_ts = ts_to_date(event.timestamp)[:19]
-        elif getattr(event, "datetime", ""):
-            fill_ts = str(event.datetime)[:19]
-
-        if fill_ts:
-            msg = f"[fill] {fill_ts} {coin} {pside} {order_type} {qty_str} @ {event.price:.2f}"
-        else:
-            msg = f"[fill] {coin} {pside} {order_type} {qty_str} @ {event.price:.2f}"
-
-        # Add pnl for close orders (always show, even if 0.0)
-        # Close orders have "close" in their type (e.g., close_grid_long, close_unstuck_long)
-        is_close = "close" in order_type
-        if is_close or event.pnl != 0.0:
-            pnl_sign = "+" if event.pnl >= 0 else ""
-            msg += f", pnl={pnl_sign}{round_dynamic(event.pnl, 3)} USDT"
-
-        # Add client_order_id for unknown orders
-        if order_type == "unknown" and event.client_order_id:
-            msg += f" (coid={event.client_order_id})"
-
-        # Always add fill ID at the end for traceability
-        fill_id = getattr(event, "id", None)
-        if fill_id:
-            # Truncate long IDs for readability (show first 12 chars)
-            short_id = str(fill_id)[:12] if len(str(fill_id)) > 12 else str(fill_id)
-            msg += f" id={short_id}"
-
-        return msg
+        return pb_fill_event_utils.log_fill_event(self, event)
 
     def _log_new_fill_events(self, new_events: list) -> None:
-        """Log new fill events. Truncates to summary if > 20 events."""
-        if not new_events:
-            return
-
-        # Track fills and PnL for health summary
-        self._health_fills += len(new_events)
-        self._health_pnl += sum(ev.pnl for ev in new_events)
-
-        if len(new_events) > 20:
-            # Truncate to summary
-            total_pnl = sum(ev.pnl for ev in new_events)
-            pnl_sign = "+" if total_pnl >= 0 else ""
-            logging.info(
-                "[fill] %d fills, pnl=%s%s USDT",
-                len(new_events),
-                pnl_sign,
-                round_dynamic(total_pnl, 3),
-            )
-        else:
-            # Log each event
-            for event in sorted(new_events, key=lambda e: e.timestamp):
-                logging.info(self._log_fill_event(event))
-        for event in sorted(new_events, key=lambda e: e.timestamp):
-            self._monitor_record_fill_history(event)
-            self._monitor_record_event(
-                "order.filled",
-                ("order", "fill"),
-                self._monitor_fill_payload(event),
-                symbol=getattr(event, "symbol", None),
-                pside=str(getattr(event, "position_side", "") or "").lower() or None,
-                ts=int(getattr(event, "timestamp", 0) or 0) or None,
-            )
+        return pb_fill_event_utils.log_new_fill_events(self, new_events)
 
     def _get_realized_pnl_cumsum_stats(self) -> dict[str, float]:
-        """Return gross realized pnl cumsum peak/current from FillEventsManager history."""
-        if self._pnls_manager is None:
-            return {"max": 0.0, "last": 0.0}
-        events = self._get_effective_pnl_events()
-        if not events:
-            return {"max": 0.0, "last": 0.0}
-        pnls_cumsum = np.array([float(ev.pnl) for ev in events], dtype=float).cumsum()
-        return {"max": float(pnls_cumsum.max()), "last": float(pnls_cumsum[-1])}
+        return pb_fill_event_utils.get_realized_pnl_cumsum_stats(self)
 
     def _log_realized_loss_gate_blocks(self, out: dict, idx_to_symbol: dict[int, str]) -> None:
-        """Emit visible warnings for close orders blocked by realized-loss gate."""
-        diagnostics = out.get("diagnostics", {}) if isinstance(out, dict) else {}
-        blocks = diagnostics.get("loss_gate_blocks", [])
-        if not isinstance(blocks, list) or not blocks:
-            return
-        now_ms = utc_ms()
-        for block in blocks:
-            if not isinstance(block, dict):
-                continue
-            symbol = idx_to_symbol.get(int(block.get("symbol_idx", -1)), "unknown")
-            pside = str(block.get("pside", "unknown"))
-            order_type = str(block.get("order_type", "unknown"))
-            throttle_key = f"{symbol}:{pside}:{order_type}"
-            last_log_ms = self._loss_gate_last_log_ms.get(throttle_key, 0)
-            if (now_ms - last_log_ms) < self._loss_gate_log_interval_ms:
-                continue
-            self._loss_gate_last_log_ms[throttle_key] = now_ms
-            qty = float(block.get("qty", 0.0) or 0.0)
-            price = float(block.get("price", 0.0) or 0.0)
-            projected_pnl = float(block.get("projected_pnl", 0.0) or 0.0)
-            projected_balance = float(block.get("projected_balance_after", 0.0) or 0.0)
-            balance_floor = float(block.get("balance_floor", 0.0) or 0.0)
-            max_loss_pct = float(block.get("max_realized_loss_pct", 1.0) or 1.0)
-            logging.warning(
-                "[risk] order blocked by realized-loss gate | %s %s %s qty=%.10g price=%.10g "
-                "projected_pnl=%.6f projected_balance=%.6f floor=%.6f max_realized_loss_pct=%.6f | "
-                "adjust live.max_realized_loss_pct to change behavior",
-                symbol,
-                pside,
-                order_type,
-                qty,
-                price,
-                projected_pnl,
-                projected_balance,
-                balance_floor,
-                max_loss_pct,
-            )
+        return pb_fill_event_utils.log_realized_loss_gate_blocks(self, out, idx_to_symbol)
 
     # Legacy init_fill_events, update_fill_events, etc. removed - using FillEventsManager
 
@@ -3800,7 +3723,7 @@ class Passivbot:
         try:
             res = await self.fetch_open_orders()
             if res in [None, False]:
-                return False
+                raise RuntimeError(f"fetch_open_orders returned invalid result {res!r}")
             self.fetched_open_orders = res
             open_orders = res
             oo_ids_old = {elm["id"] for sublist in self.open_orders.values() for elm in sublist}
@@ -3850,9 +3773,10 @@ class Passivbot:
             return False
         except Exception as e:
             logging.error(f"error with {get_function_name()} {e}")
-            print_async_exception(res)
+            if res is not None:
+                print_async_exception(res)
             traceback.print_exc()
-            return False
+            raise
 
     async def _fetch_and_apply_positions(self):
         """Fetch raw positions, apply them to local state and return snapshots.
@@ -3867,7 +3791,7 @@ class Passivbot:
             self.positions = {}
         res = await self.fetch_positions()
         if res is None:
-            return False, None, None
+            raise RuntimeError("fetch_positions returned None")
         positions_list_new = res
         fetched_positions_old = deepcopy(self.fetched_positions)
         self.fetched_positions = positions_list_new
@@ -3919,8 +3843,12 @@ class Passivbot:
             self.previous_hysteresis_balance = None
         if not hasattr(self, "balance_hysteresis_snap_pct"):
             self.balance_hysteresis_snap_pct = 0.02
+        balance_raw = None
         if not hasattr(self, "balance_raw"):
-            self.balance_raw = self.get_raw_balance()
+            if hasattr(self, "balance"):
+                self.balance_raw = self.get_raw_balance()
+            else:
+                balance_raw = await pb_balance_utils.initialize_balance(self)
 
         if self.balance_override is not None:
             balance_raw = float(self.balance_override)
@@ -3929,22 +3857,20 @@ class Passivbot:
                 self._balance_override_logged = True
         else:
             if not hasattr(self, "fetch_balance"):
-                logging.debug("update_balance: no fetch_balance implemented")
-                return False
-            balance_raw = await self.fetch_balance()
+                raise NotImplementedError("update_balance requires fetch_balance implementation")
+            if balance_raw is None:
+                balance_raw = await self.fetch_balance()
 
-        # Only accept numeric balances; keep previous value on failure
         if balance_raw is None:
-            logging.warning("balance fetch returned None; keeping previous balance")
-            return False
+            raise RuntimeError("fetch_balance returned None")
+        if isinstance(balance_raw, bool):
+            raise TypeError(f"fetch_balance returned invalid boolean balance {balance_raw!r}")
         try:
             balance_raw = float(balance_raw)
         except (TypeError, ValueError):
-            logging.warning("non-numeric balance fetch result; keeping previous balance")
-            return False
+            raise TypeError(f"fetch_balance returned non-numeric balance {balance_raw!r}")
         if not math.isfinite(balance_raw):
-            logging.warning("non-finite balance fetch result; keeping previous balance")
-            return False
+            raise ValueError(f"fetch_balance returned non-finite balance {balance_raw!r}")
 
         balance_snapped = balance_raw
         if self.balance_override is None:
@@ -4709,7 +4635,10 @@ class Passivbot:
         unstuck_allowances = self._calc_unstuck_allowances_live(
             allow_new_unstuck=not self.has_open_unstuck_order()
         )
-        realized_pnl_cumsum = self._get_realized_pnl_cumsum_stats()
+        try:
+            realized_pnl_cumsum = self._get_realized_pnl_cumsum_stats()
+        except RuntimeError:
+            realized_pnl_cumsum = {"max": 0.0, "last": 0.0}
         max_realized_loss_pct = float(self.live_value("max_realized_loss_pct") or 1.0)
 
         global_bp = {
@@ -4981,7 +4910,7 @@ class Passivbot:
                     panic_close_pref = self._equity_hard_stop_panic_close_order_type(
                         position_side
                     )
-                    if "panic" in pb_order_type:
+                    if "panic" in pb_order_type or "panic" in str(order[2]).lower():
                         execution_type = "market" if panic_close_pref == "market" else "limit"
                 if execution_type not in {"limit", "market"}:
                     execution_type = "limit"
@@ -5143,27 +5072,44 @@ class Passivbot:
         actual_orders: dict[str, list[dict]] = {}
         for symbol in self.active_symbols:
             symbol_orders = []
-            for order in self.open_orders.get(symbol, []):
+            for idx, order in enumerate(self.open_orders.get(symbol, [])):
                 try:
+                    order_symbol = order["symbol"]
+                    side = order["side"]
+                    if side not in {"buy", "sell"}:
+                        raise ValueError(f"invalid side {side!r}")
+                    position_side = order["position_side"]
+                    if position_side not in {"long", "short"}:
+                        raise ValueError(f"invalid position_side {position_side!r}")
+                    qty_raw = order["qty"]
+                    if isinstance(qty_raw, bool):
+                        raise TypeError(f"invalid boolean qty {qty_raw!r}")
+                    qty = float(qty_raw)
+                    if not math.isfinite(qty) or qty <= 0.0:
+                        raise ValueError(f"invalid qty {qty_raw!r}")
+                    price_raw = order["price"]
+                    if isinstance(price_raw, bool):
+                        raise TypeError(f"invalid boolean price {price_raw!r}")
+                    price = float(price_raw)
+                    if not math.isfinite(price) or price <= 0.0:
+                        raise ValueError(f"invalid price {price_raw!r}")
                     symbol_orders.append(
                         {
-                            "symbol": order["symbol"],
-                            "side": order["side"],
-                            "position_side": order["position_side"],
-                            "qty": abs(order["qty"]),
-                            "price": order["price"],
-                            "reduce_only": (
-                                order["position_side"] == "long" and order["side"] == "sell"
-                            )
-                            or (order["position_side"] == "short" and order["side"] == "buy"),
+                            "symbol": order_symbol,
+                            "side": side,
+                            "position_side": position_side,
+                            "qty": qty,
+                            "price": price,
+                            "reduce_only": (position_side == "long" and side == "sell")
+                            or (position_side == "short" and side == "buy"),
                             "id": order.get("id"),
                             "custom_id": order.get("custom_id"),
                         }
                     )
                 except Exception as exc:
-                    logging.error(f"error in calc_orders_to_cancel_and_create {exc}")
-                    traceback.print_exc()
-                    print(order)
+                    raise RuntimeError(
+                        f"Malformed open order for {symbol} at index {idx}: {order!r}"
+                    ) from exc
             actual_orders[symbol] = symbol_orders
         return actual_orders
 
@@ -5202,6 +5148,24 @@ class Passivbot:
                 return float("inf")
             return abs(b - a) / abs(a) * 100.0
 
+        def coerce_delta_numeric(order: dict, field: str):
+            value = order.get(field)
+            if isinstance(value, bool):
+                raise RuntimeError(
+                    f"Invalid {field} in order delta annotation: {order!r}"
+                )
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"Invalid {field} in order delta annotation: {order!r}"
+                ) from exc
+            if not math.isfinite(numeric) or numeric <= 0.0:
+                raise RuntimeError(
+                    f"Invalid {field} in order delta annotation: {order!r}"
+                )
+            return numeric
+
         # annotate cancellations
         for cancel_order in to_cancel:
             candidates = [
@@ -5217,13 +5181,17 @@ class Passivbot:
             best_idx, best_order = min(
                 candidates,
                 key=lambda c: abs(
-                    float(c[1].get("price", 0.0)) - float(cancel_order.get("price", 0.0))
+                    coerce_delta_numeric(c[1], "price") - coerce_delta_numeric(cancel_order, "price")
                 ),
             )
             raw_price_diff = pct(
-                float(cancel_order.get("price", 0.0)), float(best_order.get("price", 0.0))
+                coerce_delta_numeric(cancel_order, "price"),
+                coerce_delta_numeric(best_order, "price"),
             )
-            raw_qty_diff = pct(float(cancel_order.get("qty", 0.0)), float(best_order.get("qty", 0.0)))
+            raw_qty_diff = pct(
+                coerce_delta_numeric(cancel_order, "qty"),
+                coerce_delta_numeric(best_order, "qty"),
+            )
             price_diff = round(raw_price_diff, 4) if math.isfinite(raw_price_diff) else raw_price_diff
             qty_diff = round(raw_qty_diff, 4) if math.isfinite(raw_qty_diff) else raw_qty_diff
             reason_parts = []
@@ -5294,8 +5262,10 @@ class Passivbot:
                     ):
                         match_idx = idx
                         break
-                except Exception:
-                    continue
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to compare candidate orders for tolerance matching on {symbol}: create={order!r} cancel={existing!r}"
+                    ) from exc
             if match_idx is None:
                 kept_create.append(order)
             else:
@@ -5370,36 +5340,45 @@ class Passivbot:
         market_prices = await self._fetch_market_prices({order["symbol"] for order in orders})
         entries = []
         for order in orders:
-            market_price = market_prices.get(order["symbol"])
-            if market_price is None:
-                logging.debug("price missing sort %s by mprice_diff %s", log_label, order)
-                diff = 0.0
-            else:
-                diff = order_market_diff(order["side"], order["price"], market_price)
+            market_price = market_prices[order["symbol"]]
+            diff = order_market_diff(order["side"], order["price"], market_price)
             entries.append((diff, order))
         entries.sort(key=lambda item: item[0])
         return [order for _, order in entries]
 
-    async def _fetch_market_prices(self, symbols: set[str]) -> dict[str, float | None]:
+    def _coerce_required_market_price(self, symbol: str, price) -> float:
+        if isinstance(price, bool):
+            raise TypeError(f"invalid boolean market price for {symbol}: {price!r}")
+        try:
+            numeric = float(price)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(f"invalid market price for {symbol}: {price!r}") from exc
+        if not math.isfinite(numeric) or numeric <= 0.0:
+            raise ValueError(f"non-positive market price for {symbol}: {numeric}")
+        return numeric
+
+    async def _fetch_market_prices(self, symbols: set[str]) -> dict[str, float]:
         """Fetch current close prices for the supplied symbols."""
-        results: dict[str, float | None] = {}
+        results: dict[str, float] = {}
         tasks: dict[str, asyncio.Task] = {}
+        errors: dict[str, str] = {}
         for symbol in symbols:
             try:
                 fetch_result = self.cm.get_current_close(symbol, max_age_ms=10_000)
                 if inspect.isawaitable(fetch_result):
                     tasks[symbol] = asyncio.create_task(fetch_result)
                 else:
-                    results[symbol] = fetch_result
+                    results[symbol] = self._coerce_required_market_price(symbol, fetch_result)
             except Exception as exc:
-                logging.debug("failed fetching mprice for %s: %s", symbol, exc)
-                results[symbol] = None
+                errors[symbol] = str(exc)
         for symbol, task in tasks.items():
             try:
-                results[symbol] = await task
+                results[symbol] = self._coerce_required_market_price(symbol, await task)
             except Exception as exc:
-                logging.debug("failed fetching mprice for %s: %s", symbol, exc)
-                results[symbol] = None
+                errors[symbol] = str(exc)
+        if errors:
+            details = "; ".join(f"{symbol}: {msg}" for symbol, msg in sorted(errors.items()))
+            raise RuntimeError(f"failed fetching market prices for order sorting: {details}")
         return results
 
     async def restart_bot_on_too_many_errors(self):
@@ -6497,6 +6476,12 @@ Passivbot.update_effective_min_cost = pb_balance_utils.update_effective_min_cost
 Passivbot._build_ccxt_options = pb_client_utils.build_ccxt_options
 Passivbot._apply_endpoint_override = pb_client_utils.apply_endpoint_override
 Passivbot.log_once = pb_debug_utils.log_once
+Passivbot._is_rate_limit_like_exception = pb_exchange_config.is_rate_limit_like_exception
+Passivbot._exchange_config_backoff_seconds = pb_exchange_config.exchange_config_backoff_seconds
+Passivbot._exchange_config_success_pause_seconds = pb_exchange_config.exchange_config_success_pause_seconds
+Passivbot._update_single_symbol_exchange_config = pb_exchange_config.update_single_symbol_exchange_config
+Passivbot.update_exchange_configs = pb_exchange_config.update_exchange_configs
+Passivbot.get_exchange_time = pb_runtime_ops.get_exchange_time
 Passivbot.get_current_n_positions = pb_mode_utils.get_current_n_positions
 Passivbot._assert_supported_live_state = pb_hook_utils.assert_supported_live_state
 Passivbot.effective_min_cost_is_low_enough = pb_exposure_utils.effective_min_cost_is_low_enough
@@ -6552,6 +6537,7 @@ Passivbot._calc_unstuck_allowances = pb_unstuck_utils.calc_unstuck_allowances
 Passivbot._calc_unstuck_allowances_live = pb_unstuck_utils.calc_unstuck_allowances_live
 Passivbot._log_unstuck_status = pb_unstuck_utils.log_unstuck_status
 Passivbot._maybe_log_unstuck_status = pb_unstuck_utils.maybe_log_unstuck_status
+Passivbot._equity_hard_stop_realized_pnl_now = pb_hsl._equity_hard_stop_realized_pnl_now
 Passivbot.add_new_order = pb_order_update_utils.add_new_order
 Passivbot.add_to_recent_order_cancellations = pb_order_update_utils.add_to_recent_order_cancellations
 Passivbot.add_to_recent_order_executions = pb_order_update_utils.add_to_recent_order_executions

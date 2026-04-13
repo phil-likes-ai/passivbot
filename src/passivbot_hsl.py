@@ -983,7 +983,10 @@ async def _equity_hard_stop_initialize_from_history(self) -> None:
             for pside in self._hsl_psides()
         }
         current_balance = float(self.get_raw_balance())
-        current_realized_total = float(self._equity_hard_stop_realized_pnl_now())
+        try:
+            current_realized_total = float(self._equity_hard_stop_realized_pnl_now())
+        except RuntimeError:
+            current_realized_total = 0.0
         current_upnl_by_pside = {
             pside: float(await self._calc_upnl_sum_strict(pside)) for pside in self._hsl_psides()
         }

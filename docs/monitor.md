@@ -19,6 +19,10 @@ python src/tools/monitor_relay.py --monitor-root monitor
 
 Default bind address is `127.0.0.1:8765`.
 
+For the supported production posture, keep the relay/dashboard local-only or place remote access
+behind an authenticated TLS reverse proxy as described in
+[`production_deployment_profile.md`](production_deployment_profile.md).
+
 The relay is intended to be a single long-running process per repo checkout:
 
 1. Start it before or after any bot.
@@ -46,6 +50,7 @@ The relay is intended to be a single long-running process per repo checkout:
 - The relay is read-only. It does not mutate monitor artifacts.
 - The websocket stream is intended for local dashboards, TUIs, replay tooling, and other fan-in consumers.
 - The browser dashboard and TUI both consume the same read-only `/snapshot` + `/ws` surface.
+- Direct unauthenticated public exposure is outside the supported production profile.
 
 ## Web Dashboard
 

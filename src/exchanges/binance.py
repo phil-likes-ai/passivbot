@@ -77,7 +77,15 @@ class BinanceBot(CCXTBot):
 
     def _get_position_side_for_order(self, order: dict) -> str:
         """Binance provides ps (positionSide) in info."""
-        return order.get("info", {}).get("ps", "long").lower()
+        info = order.get("info", {})
+        if not isinstance(info, dict) or "ps" not in info:
+            raise KeyError(f"{self.exchange}: missing ps in open-order payload")
+        position_side = str(info["ps"]).lower()
+        if position_side not in {"long", "short"}:
+            raise ValueError(
+                f"{self.exchange}: invalid ps in open-order payload: {info['ps']!r}"
+            )
+        return position_side
 
     async def _do_fetch_positions(self) -> list:
         """Binance: Use fapiprivatev3_get_positionrisk endpoint."""
@@ -87,23 +95,53 @@ class BinanceBot(CCXTBot):
         """Binance: Parse positionrisk response format."""
         positions = []
         for elm in fetched:
-            if float(elm["positionAmt"]) != 0.0:
-                normalized = {
-                    "symbol": self.get_symbol_id_inv(elm["symbol"]),
-                    "position_side": elm["positionSide"].lower(),
-                    "size": float(elm["positionAmt"]),
-                    "price": float(elm["entryPrice"]),
-                }
-                margin_mode = self._extract_live_margin_mode(elm)
-                if margin_mode is not None:
-                    normalized["margin_mode"] = margin_mode
-                    self._record_live_margin_mode(normalized["symbol"], margin_mode)
-                positions.append(normalized)
+            size = self._coerce_required_numeric_value(
+                elm["positionAmt"],
+                field="positionAmt",
+                symbol=elm.get("symbol"),
+                allow_zero=True,
+                payload_kind="position payload",
+            )
+            if size == 0.0:
+                continue
+            side_raw = elm.get("positionSide")
+            if side_raw is None:
+                raise KeyError(
+                    f"{self.exchange}: missing positionSide in position payload for {elm.get('symbol')}"
+                )
+            position_side = str(side_raw).lower()
+            if position_side not in {"long", "short"}:
+                raise ValueError(
+                    f"{self.exchange}: invalid positionSide in position payload for {elm.get('symbol')}: {side_raw!r}"
+                )
+            normalized = {
+                "symbol": self.get_symbol_id_inv(elm["symbol"]),
+                "position_side": position_side,
+                "size": size,
+                "price": self._coerce_required_numeric_value(
+                    elm["entryPrice"],
+                    field="entryPrice",
+                    symbol=elm.get("symbol"),
+                    allow_zero=False,
+                    payload_kind="position payload",
+                ),
+            }
+            margin_mode = self._extract_live_margin_mode(elm)
+            if margin_mode is not None:
+                normalized["margin_mode"] = margin_mode
+                self._record_live_margin_mode(normalized["symbol"], margin_mode)
+            positions.append(normalized)
         return positions
 
     def _get_balance(self, fetched: dict) -> float:
         """Binance uses totalCrossWalletBalance in info."""
-        return float(fetched["info"]["totalCrossWalletBalance"])
+        return self._coerce_required_numeric_value(
+            fetched["info"]["totalCrossWalletBalance"],
+            field="totalCrossWalletBalance",
+            symbol=self.quote,
+            allow_zero=True,
+            payload_kind="balance payload",
+        )
 
     # ═══════════════════ BINANCE-SPECIFIC METHODS ═══════════════════
 
@@ -140,8 +178,20 @@ class BinanceBot(CCXTBot):
         for elm in fetched:
             symbol = self.get_symbol_id_inv(elm["symbol"])
             if symbol in self.markets_dict:
-                bid = float(elm["bidPrice"])
-                ask = float(elm["askPrice"])
+                bid = self._coerce_required_numeric_value(
+                    elm["bidPrice"],
+                    field="bidPrice",
+                    symbol=elm.get("symbol"),
+                    allow_zero=False,
+                    payload_kind="ticker payload",
+                )
+                ask = self._coerce_required_numeric_value(
+                    elm["askPrice"],
+                    field="askPrice",
+                    symbol=elm.get("symbol"),
+                    allow_zero=False,
+                    payload_kind="ticker payload",
+                )
                 tickers[symbol] = {
                     "bid": bid,
                     "ask": ask,

@@ -90,7 +90,11 @@ def build_orchestrator_mode_overrides_fallback(self, symbols):
         pside_modes = pb_modes.get(pside, {}) if isinstance(pb_modes, dict) else {}
         for symbol in symbols:
             mode = pside_modes.get(symbol)
-            overrides[pside][symbol] = self._mode_override_to_orchestrator_mode(mode) if mode else None
+            converter = getattr(self, "_mode_override_to_orchestrator_mode", None)
+            if converter is None:
+                overrides[pside][symbol] = mode_override_to_orchestrator_mode(self, mode) if mode else None
+            else:
+                overrides[pside][symbol] = converter(mode) if mode else None
     return overrides
 
 

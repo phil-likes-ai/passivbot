@@ -153,14 +153,35 @@ class ParadexBot(CCXTBot):
     def _normalize_order_update(self, order: dict) -> dict:
         """Transform Paradex order format to passivbot format."""
         custom_id = order.get("client_id") or ""
+        order_type = (order.get("type") or "").lower()
+        side = (order.get("side") or "").lower()
+        if side not in {"buy", "sell"}:
+            raise ValueError(f"{self.exchange}: invalid side in order payload: {order.get('side')!r}")
+        size_raw = order.get("size")
+        size = self._coerce_required_numeric_value(
+            size_raw,
+            field="size",
+            symbol=order.get("market"),
+            allow_zero=False,
+            payload_kind="order payload",
+        )
+        price_raw = order.get("price")
+        allow_zero_price = order_type == "market"
+        price = self._coerce_required_numeric_value(
+            price_raw,
+            field="price",
+            symbol=order.get("market"),
+            allow_zero=allow_zero_price,
+            payload_kind="order payload",
+        )
         normalized = {
             "id": order.get("id"),
             "symbol": self._paradex_market_to_symbol(order.get("market")),
-            "side": (order.get("side") or "").lower(),
-            "type": (order.get("type") or "").lower(),
-            "price": float(order.get("price") or 0),
-            "amount": float(order.get("size") or 0),
-            "qty": float(order.get("size") or 0),
+            "side": side,
+            "type": order_type,
+            "price": price,
+            "amount": size,
+            "qty": size,
             "status": self._normalize_status(order.get("status")),
             "timestamp": order.get("created_at"),
             "clientOrderId": custom_id,

@@ -380,11 +380,20 @@ class TestParadexNormalizeOrderUpdate:
             from exchanges.paradex import ParadexBot
 
             bot = ParadexBot.__new__(ParadexBot)
+            bot.exchange = "paradex"
+            bot.quote = "USDC"
             bot.markets_dict = {}
 
             # 0x0007 = close_grid_long - a SELL order to close a LONG position
             result = bot._normalize_order_update(
-                {"side": "SELL", "market": "X", "client_id": "order-0x0007"}
+                {
+                    "side": "SELL",
+                    "market": "X",
+                    "client_id": "order-0x0007",
+                    "size": "0.5",
+                    "price": "2000",
+                    "type": "LIMIT",
+                }
             )
 
             assert result["position_side"] == "long"  # NOT short!
@@ -396,9 +405,13 @@ class TestParadexNormalizeOrderUpdate:
             from exchanges.paradex import ParadexBot
 
             bot = ParadexBot.__new__(ParadexBot)
+            bot.exchange = "paradex"
+            bot.quote = "USDC"
             bot.markets_dict = {}
 
-            result = bot._normalize_order_update({"side": "SELL", "market": "X"})
+            result = bot._normalize_order_update(
+                {"side": "SELL", "market": "X", "size": "0.5", "price": "2000", "type": "LIMIT"}
+            )
 
             assert result["position_side"] == "both"
 
@@ -434,3 +447,28 @@ class TestParadexNormalizeOrderUpdate:
             bot.markets_dict = {"ETH/USD:USD": {"id": "ETH-USD-PERP"}}
 
             assert bot._paradex_market_to_symbol("ETH-USD-PERP") == "ETH/USD:USD"
+
+
+    def test_normalize_order_update_raises_when_size_is_boolean(self):
+        with patch("exchanges.paradex.CCXTBot.__init__", return_value=None):
+            from exchanges.paradex import ParadexBot
+
+            bot = ParadexBot.__new__(ParadexBot)
+            bot.exchange = "paradex"
+            bot.quote = "USDC"
+            bot.markets_dict = {}
+
+            with pytest.raises(TypeError, match="invalid boolean size"):
+                bot._normalize_order_update({"side": "BUY", "market": "X", "size": True, "price": "1", "type": "LIMIT"})
+
+    def test_normalize_order_update_raises_when_limit_price_is_non_positive(self):
+        with patch("exchanges.paradex.CCXTBot.__init__", return_value=None):
+            from exchanges.paradex import ParadexBot
+
+            bot = ParadexBot.__new__(ParadexBot)
+            bot.exchange = "paradex"
+            bot.quote = "USDC"
+            bot.markets_dict = {}
+
+            with pytest.raises(ValueError, match="non-positive price"):
+                bot._normalize_order_update({"side": "BUY", "market": "X", "size": "0.5", "price": "0", "type": "LIMIT"})

@@ -4,6 +4,11 @@ All notable user-facing changes will be documented in this file.
 
 ## Unreleased
 
+- Continued the modernization hardening wave with direct god-class decomposition and stronger regression coverage: `passivbot.py`, `candlestick_manager.py`, and `fill_events_manager.py` each moved another cohesive helper cluster into focused utility modules, while the touched helper/test suites gained broader targeted coverage.
+- Completed the exchange reliability modernization pass for KuCoin/Bybit/Hyperliquid. Exchange-config updates now run through a shared bot-bound updater surface with adapter parity tests for config sequencing, tolerated no-op branches, and REST fallback coverage in candlestick manager retry/pagination flows.
+- Strengthened Rust-side risk and unstuck behavior with additional deterministic guardrails/tests in `risk.rs`, `entries.rs`, and `closes.rs`, including dynamic TWEL denominator handling, volatility-sensitive entry spacing checks, unstuck loss-allowance protection, and WEL auto-reduce close coverage.
+- Added a lightweight `mypy.ini` scoped to `src` plus a documented critical modernization regression bundle in `docs/ai/code_review_prompt.md`, making repeated verification of the hardened/runtime-critical modules easier and more consistent.
+
 - Added formal top-level `config_version` schema tagging starting at `v7.9.0`. Canonical defaults and the mirrored example config now carry the schema version, older configs log a migration attempt during load, and the loader upgrades them to the current schema version.
 - Backtests now read `market_orders_allowed`, `market_order_near_touch_threshold`, and `pnls_max_lookback_days` from `config.live` only. `config.backtest` no longer accepts those fields, which avoids silent drift between live and backtest behavior.
 - Pre-v7.9 backtests did not correctly observe `pnls_max_lookback_days`, and they also did not simulate ordinary market-order execution. v7.9+ treats both as backtest correctness fixes rather than preserving bug-compatibility via migrated `backtest` overrides.

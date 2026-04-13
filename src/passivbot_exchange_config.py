@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from typing import Awaitable, Callable, cast
 
 from ccxt.base.errors import RateLimitExceeded
 
@@ -90,6 +91,14 @@ async def update_exchange_configs(self):
         x for x in self.active_symbols if x not in self.already_updated_exchange_config_symbols
     ]
     if symbols_not_done:
+        update_single_cb = cast(
+            Callable[[str], Awaitable[bool]] | None,
+            getattr(self, "_update_single_symbol_exchange_config", None),
+        )
+        if update_single_cb is None:
+            async def _fallback_update_single(symbol: str) -> bool:
+                return await update_single_symbol_exchange_config(self, symbol)
+            update_single_cb = _fallback_update_single
         for symbol in symbols_not_done:
-            if not await self._update_single_symbol_exchange_config(symbol):
+            if not await update_single_cb(symbol):
                 break

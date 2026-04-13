@@ -10,6 +10,22 @@ from ccxt.base.errors import RateLimitExceeded
 pb_exchange_config = import_module("passivbot_exchange_config")
 
 
+def test_passivbot_binds_shared_exchange_config_helpers():
+    import passivbot as pb_mod
+
+    assert pb_mod.Passivbot._is_rate_limit_like_exception is pb_exchange_config.is_rate_limit_like_exception
+    assert pb_mod.Passivbot._exchange_config_backoff_seconds is pb_exchange_config.exchange_config_backoff_seconds
+    assert (
+        pb_mod.Passivbot._exchange_config_success_pause_seconds
+        is pb_exchange_config.exchange_config_success_pause_seconds
+    )
+    assert (
+        pb_mod.Passivbot._update_single_symbol_exchange_config
+        is pb_exchange_config.update_single_symbol_exchange_config
+    )
+    assert pb_mod.Passivbot.update_exchange_configs is pb_exchange_config.update_exchange_configs
+
+
 def test_is_rate_limit_like_exception_detects_known_patterns():
     bot = types.SimpleNamespace()
 

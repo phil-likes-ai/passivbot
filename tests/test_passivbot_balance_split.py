@@ -153,6 +153,9 @@ async def test_update_positions_only_updates_positions(monkeypatch):
 async def test_update_balance_uses_fetch_balance_when_no_cache():
     bot = Passivbot.__new__(Passivbot)
     bot.quote = "USDT"
+    bot.balance = 0.0
+    bot.balance_raw = 0.0
+    bot.previous_hysteresis_balance = 0.0
     calls = {"balance": 0}
 
     async def fake_handle_balance_update(source="REST"):
@@ -218,7 +221,7 @@ async def test_update_balance_override_does_not_reset_hysteresis_anchor():
 
 
 @pytest.mark.asyncio
-async def test_update_balance_nan_keeps_previous_and_logs_warning(caplog):
+async def test_update_balance_nan_raises_and_preserves_previous():
     bot = Passivbot.__new__(Passivbot)
     bot.quote = "USDT"
     bot.balance = 50.0
@@ -230,17 +233,15 @@ async def test_update_balance_nan_keeps_previous_and_logs_warning(caplog):
 
     bot.fetch_balance = fake_fetch_balance
 
-    with caplog.at_level(logging.WARNING):
-        ok = await bot.update_balance()
-    assert ok is False
+    with pytest.raises(ValueError, match="fetch_balance returned non-finite balance nan"):
+        await bot.update_balance()
     assert bot.balance == pytest.approx(50.0)
     assert bot.balance_raw == pytest.approx(50.0)
     assert bot.previous_hysteresis_balance == pytest.approx(50.0)
-    assert "non-finite balance fetch result; keeping previous balance" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_update_balance_inf_keeps_previous_and_logs_warning(caplog):
+async def test_update_balance_inf_raises_and_preserves_previous():
     bot = Passivbot.__new__(Passivbot)
     bot.quote = "USDT"
     bot.balance = 50.0
@@ -252,13 +253,104 @@ async def test_update_balance_inf_keeps_previous_and_logs_warning(caplog):
 
     bot.fetch_balance = fake_fetch_balance
 
-    with caplog.at_level(logging.WARNING):
-        ok = await bot.update_balance()
-    assert ok is False
+    with pytest.raises(ValueError, match="fetch_balance returned non-finite balance inf"):
+        await bot.update_balance()
     assert bot.balance == pytest.approx(50.0)
     assert bot.balance_raw == pytest.approx(50.0)
     assert bot.previous_hysteresis_balance == pytest.approx(50.0)
-    assert "non-finite balance fetch result; keeping previous balance" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_update_balance_none_raises_and_preserves_previous():
+    bot = Passivbot.__new__(Passivbot)
+    bot.quote = "USDT"
+    bot.balance = 50.0
+    bot.balance_raw = 50.0
+    bot.previous_hysteresis_balance = 50.0
+
+    async def fake_fetch_balance():
+        return None
+
+    bot.fetch_balance = fake_fetch_balance
+
+    with pytest.raises(RuntimeError, match="fetch_balance returned None"):
+        await bot.update_balance()
+    assert bot.balance == pytest.approx(50.0)
+    assert bot.balance_raw == pytest.approx(50.0)
+    assert bot.previous_hysteresis_balance == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
+async def test_update_balance_raises_when_fetch_balance_not_implemented():
+    bot = Passivbot.__new__(Passivbot)
+    bot.quote = "USDT"
+    bot.balance = 50.0
+    bot.balance_raw = 50.0
+    bot.previous_hysteresis_balance = 50.0
+
+    with pytest.raises(NotImplementedError, match="update_balance requires fetch_balance implementation"):
+        await bot.update_balance()
+
+    assert bot.balance == pytest.approx(50.0)
+    assert bot.balance_raw == pytest.approx(50.0)
+    assert bot.previous_hysteresis_balance == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
+async def test_update_balance_non_numeric_raises_and_preserves_previous():
+    bot = Passivbot.__new__(Passivbot)
+    bot.quote = "USDT"
+    bot.balance = 50.0
+    bot.balance_raw = 50.0
+    bot.previous_hysteresis_balance = 50.0
+
+    async def fake_fetch_balance():
+        return {"not": "a number"}
+
+    bot.fetch_balance = fake_fetch_balance
+
+    with pytest.raises(TypeError, match="fetch_balance returned non-numeric balance"):
+        await bot.update_balance()
+    assert bot.balance == pytest.approx(50.0)
+    assert bot.balance_raw == pytest.approx(50.0)
+    assert bot.previous_hysteresis_balance == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_result", [False, True])
+async def test_update_balance_boolean_raises_and_preserves_previous(invalid_result):
+    bot = Passivbot.__new__(Passivbot)
+    bot.quote = "USDT"
+    bot.balance = 50.0
+    bot.balance_raw = 50.0
+    bot.previous_hysteresis_balance = 50.0
+
+    async def fake_fetch_balance():
+        return invalid_result
+
+    bot.fetch_balance = fake_fetch_balance
+
+    with pytest.raises(TypeError, match="fetch_balance returned invalid boolean balance"):
+        await bot.update_balance()
+    assert bot.balance == pytest.approx(50.0)
+    assert bot.balance_raw == pytest.approx(50.0)
+    assert bot.previous_hysteresis_balance == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
+async def test_update_positions_raises_when_fetch_positions_returns_none():
+    bot = Passivbot.__new__(Passivbot)
+    bot.positions = {}
+    bot.active_symbols = []
+    bot.fetched_positions = []
+
+    async def fake_fetch_positions():
+        return None
+
+    bot.fetch_positions = fake_fetch_positions
+
+    with pytest.raises(RuntimeError, match="fetch_positions returned None"):
+        await bot.update_positions()
 
 
 def test_accessor_fallback_when_balance_raw_absent():

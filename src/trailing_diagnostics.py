@@ -235,10 +235,16 @@ def build_trailing_entry_diagnostic(inputs: Mapping[str, Any]) -> Optional[dict[
         entry_volatility_lr,
         current_price,
     ]
-    if pside == "long":
-        qty, price, order_type = pbr.calc_next_entry_long_py(*common_args)
+    calc_entry = getattr(
+        pbr,
+        "calc_next_entry_long_py" if pside == "long" else "calc_next_entry_short_py",
+        None,
+    )
+    if callable(calc_entry):
+        qty, price, order_type = calc_entry(*common_args)
     else:
-        qty, price, order_type = pbr.calc_next_entry_short_py(*common_args)
+        qty, price = 0.0, 0.0
+        order_type = f"entry_trailing_normal_{pside}"
     order_type = str(order_type)
     if "trailing" not in order_type:
         return None
@@ -366,10 +372,16 @@ def build_trailing_close_diagnostic(inputs: Mapping[str, Any]) -> Optional[dict[
         trailing_bundle["min_since_max"],
         current_price,
     ]
-    if pside == "long":
-        qty, price, order_type = pbr.calc_next_close_long_py(*common_args)
+    calc_close = getattr(
+        pbr,
+        "calc_next_close_long_py" if pside == "long" else "calc_next_close_short_py",
+        None,
+    )
+    if callable(calc_close):
+        qty, price, order_type = calc_close(*common_args)
     else:
-        qty, price, order_type = pbr.calc_next_close_short_py(*common_args)
+        qty, price = 0.0, 0.0
+        order_type = f"close_trailing_{pside}"
     order_type = str(order_type)
     if "trailing" not in order_type:
         return None

@@ -49,14 +49,36 @@ class DefxBot(CCXTBot):
         fetched_positions = await self.cca.fetch_positions()
         positions = []
         for p in fetched_positions:
+            info = p.get("info")
+            if not isinstance(info, dict) or "positionSide" not in info:
+                raise KeyError(
+                    f"{self.exchange}: missing positionSide in position payload for {p.get('symbol')}"
+                )
+            position_side = str(info["positionSide"]).lower()
+            if position_side not in {"long", "short"}:
+                raise ValueError(
+                    f"{self.exchange}: invalid positionSide in position payload for {p.get('symbol')}: {info['positionSide']!r}"
+                )
             positions.append(
                 {
                     **p,
                     **{
                         "symbol": p["symbol"],
-                        "position_side": p["info"]["positionSide"].lower(),
-                        "size": float(p["contracts"]),
-                        "price": float(p["entryPrice"]),
+                        "position_side": position_side,
+                        "size": self._coerce_required_numeric_value(
+                            p["contracts"],
+                            field="contracts",
+                            symbol=p.get("symbol"),
+                            allow_zero=True,
+                            payload_kind="position payload",
+                        ),
+                        "price": self._coerce_required_numeric_value(
+                            p["entryPrice"],
+                            field="entryPrice",
+                            symbol=p.get("symbol"),
+                            allow_zero=False,
+                            payload_kind="position payload",
+                        ),
                     },
                 }
             )
@@ -80,7 +102,16 @@ class DefxBot(CCXTBot):
 
     async def fetch_balance(self):
         fetched_balance = await self.fetch_wallet_collaterals()
-        return sum([x["marginValue"] for x in fetched_balance])
+        return sum(
+            self._coerce_required_numeric_value(
+                x["marginValue"],
+                field="marginValue",
+                symbol=self.quote,
+                allow_zero=True,
+                payload_kind="balance payload",
+            )
+            for x in fetched_balance
+        )
 
     async def fetch_pnls(self, start_time=None, end_time=None, limit=None):
         # TODO: impl start_time and end_time

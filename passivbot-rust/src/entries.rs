@@ -1075,6 +1075,91 @@ pub fn calc_next_entry_short(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{
+        BotParams, EMABands, OrderBook, Position, StateParams, TrailingPriceBundle,
+    };
+
+    fn exchange() -> ExchangeParams {
+        ExchangeParams {
+            qty_step: 0.1,
+            price_step: 0.1,
+            min_qty: 0.1,
+            min_cost: 0.0,
+            c_mult: 1.0,
+            ..Default::default()
+        }
+    }
+
+    fn bot() -> BotParams {
+        BotParams {
+            wallet_exposure_limit: 1.0,
+            entry_grid_spacing_pct: 0.01,
+            entry_grid_spacing_we_weight: 0.0,
+            entry_grid_spacing_volatility_weight: 0.5,
+            entry_initial_qty_pct: 0.1,
+            entry_grid_double_down_factor: 1.0,
+            entry_initial_ema_dist: 0.0,
+            ..Default::default()
+        }
+    }
+
+    fn state(vol: f64) -> StateParams {
+        StateParams {
+            balance: 1000.0,
+            order_book: OrderBook {
+                bid: 100.0,
+                ask: 100.5,
+            },
+            ema_bands: EMABands {
+                upper: 100.0,
+                lower: 100.0,
+            },
+            entry_volatility_logrange_ema_1h: vol,
+        }
+    }
+
+    #[test]
+    fn test_calc_grid_entry_long_uses_volatility_scaled_spacing() {
+        let exchange = exchange();
+        let bot = bot();
+        let position = Position {
+            size: 1.0,
+            price: 100.0,
+        };
+
+        let low_vol = calc_grid_entry_long(&exchange, &state(0.0), &bot, &position, 1.0);
+        let high_vol = calc_grid_entry_long(&exchange, &state(2.0), &bot, &position, 1.0);
+
+        assert_eq!(low_vol.order_type, OrderType::EntryGridNormalLong);
+        assert_eq!(high_vol.order_type, OrderType::EntryGridNormalLong);
+        assert!(high_vol.price < low_vol.price);
+    }
+
+    #[test]
+    fn test_calc_next_entry_long_prefers_trailing_when_ratio_positive_and_exposure_low() {
+        let exchange = exchange();
+        let mut bot = bot();
+        bot.entry_trailing_grid_ratio = 0.5;
+        bot.entry_trailing_threshold_pct = 0.0;
+        bot.entry_trailing_retracement_pct = 0.01;
+        let position = Position {
+            size: 1.0,
+            price: 100.0,
+        };
+        let trailing = TrailingPriceBundle {
+            min_since_open: 99.0,
+            max_since_min: 101.0,
+            ..Default::default()
+        };
+
+        let order = calc_next_entry_long(&exchange, &state(0.0), &bot, &position, &trailing);
+        assert_eq!(order.order_type, OrderType::EntryTrailingNormalLong);
+    }
+}
+
 pub fn calc_entries_long(
     exchange_params: &ExchangeParams,
     state_params: &StateParams,

@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-from importlib import import_module
 import time
 
 import numpy as np
 
-
-def _get_caller_name_fn():
-    return import_module("candlestick_manager").get_caller_name
+import candlestick_manager_misc_utils as cm_misc_utils
 
 
 def fmt_ts(ms) -> str:
     try:
         return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(int(ms) / 1000.0)) if ms is not None else "-"
-    except Exception:
+    except (TypeError, ValueError, OverflowError, OSError):
         return str(ms)
 
 
@@ -25,7 +22,7 @@ def log(self, level: str, event: str, **fields) -> None:
     base = [f"[candle] event={event}"]
     if self.debug_level >= 1:
         try:
-            caller = _get_caller_name_fn()()
+            caller = cm_misc_utils.get_caller_name()
             base.append(f"called_by={caller}")
         except Exception:
             pass

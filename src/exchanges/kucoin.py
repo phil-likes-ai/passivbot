@@ -255,7 +255,13 @@ class KucoinBot(CCXTBot):
 
     def _get_balance(self, fetched: dict) -> float:
         """KuCoin uses marginBalance in info.data."""
-        return float(fetched["info"]["data"]["marginBalance"])
+        return self._coerce_required_numeric_value(
+            fetched["info"]["data"]["marginBalance"],
+            field="marginBalance",
+            symbol=self.quote,
+            allow_zero=True,
+            payload_kind="balance payload",
+        )
 
     async def calc_ideal_orders(self):
         # KuCoin enforces a 150 open-order cap; keep only the closest price targets.

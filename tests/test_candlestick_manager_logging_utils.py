@@ -9,6 +9,12 @@ def test_fmt_ts_formats_and_falls_back():
     assert cm_logging_utils.fmt_ts(0).startswith("1970-01-01T00:00:00")
     assert cm_logging_utils.fmt_ts(None) == "-"
 
+    class BadTimestamp:
+        def __str__(self):
+            return "bad-ts"
+
+    assert cm_logging_utils.fmt_ts(BadTimestamp()) == "bad-ts"
+
 
 def test_progress_log_throttles(monkeypatch):
     calls = []

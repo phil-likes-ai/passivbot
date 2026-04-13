@@ -8,6 +8,7 @@ import inspect
 import os
 import runpy
 import sys
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -150,6 +151,7 @@ FULL_INSTALL_MODULE_HINTS = {
 FULL_INSTALL_MARKER_MODULES = tuple(sorted(FULL_INSTALL_MODULE_HINTS | {"websockets"}))
 ENV_MISMATCH_IGNORE_ENV = "PASSIVBOT_IGNORE_ENV_MISMATCH"
 ENV_REEXEC_GUARD_ENV = "PASSIVBOT_ENV_REEXEC"
+ENV_SKIP_RUNTIME_VERIFY = "PASSIVBOT_SKIP_RUNTIME_EXTENSION_VERIFY"
 
 
 def _build_root_parser() -> argparse.ArgumentParser:
@@ -222,17 +224,29 @@ def _current_interpreter_prefixes() -> tuple[Path, ...]:
 
 
 def _env_bin_dir(prefix: Path) -> Path:
-    return prefix / ("Scripts" if os.name == "nt" else "bin")
+    preferred = prefix / ("Scripts" if os.name == "nt" else "bin")
+    alternate = prefix / ("bin" if os.name == "nt" else "Scripts")
+    if preferred.exists() or not alternate.exists():
+        return preferred
+    return alternate
 
 
 def _expected_console_script(prefix: Path) -> Path:
     suffix = ".exe" if os.name == "nt" else ""
-    return _env_bin_dir(prefix) / f"passivbot{suffix}"
+    primary = _env_bin_dir(prefix) / f"passivbot{suffix}"
+    if primary.exists():
+        return primary
+    fallback = _env_bin_dir(prefix) / "passivbot"
+    return fallback
 
 
 def _expected_python(prefix: Path) -> Path:
     suffix = ".exe" if os.name == "nt" else ""
-    return _env_bin_dir(prefix) / f"python{suffix}"
+    primary = _env_bin_dir(prefix) / f"python{suffix}"
+    if primary.exists():
+        return primary
+    fallback = _env_bin_dir(prefix) / "python"
+    return fallback
 
 
 def _install_command_line(command: str, prefix: Path | None = None) -> str:
@@ -255,10 +269,11 @@ def _install_guidance(prefix: Path | None = None) -> str:
 def _environment_mismatch_message(prefix: Path, actual_python: Path) -> str:
     script = _resolve_path(sys.argv[0]) if sys.argv and sys.argv[0] else None
     expected_script = _expected_console_script(prefix)
+    actual_python_display = os.fspath(sys.executable)
     return (
         "passivbot detected an active environment mismatch.\n"
         f"  Active environment: {prefix}\n"
-        f"  Running python:     {actual_python}\n"
+        f"  Running python:     {actual_python_display}\n"
         f"  Running script:     {script}\n"
         f"  Expected script:    {expected_script}\n"
         "This usually means your shell resolved a stale shim or a different install.\n\n"
@@ -324,7 +339,7 @@ def _invoke_module_main(module_name: str) -> tuple[bool, int]:
 
     result = main_fn()
     if inspect.isawaitable(result):
-        result = asyncio.run(result)
+        result = asyncio.run(result if isinstance(result, Coroutine) else _wrap_awaitable(result))
 
     if result is None:
         return True, 0
@@ -341,9 +356,12 @@ def _run_module(module_name: str, prog_name: str, argv: list[str], requires_full
 
     previous_argv = sys.argv[:]
     previous_prog = os.environ.get("PASSIVBOT_CLI_PROG")
+    previous_skip_runtime_verify = os.environ.get(ENV_SKIP_RUNTIME_VERIFY)
     sys.argv = [prog_name, *argv]
     os.environ["PASSIVBOT_CLI_PROG"] = prog_name
     try:
+        if _is_help_request(argv):
+            os.environ[ENV_SKIP_RUNTIME_VERIFY] = "1"
         ran_main, exit_code = _invoke_module_main(module_name)
         if ran_main:
             return exit_code
@@ -362,7 +380,12 @@ def _run_module(module_name: str, prog_name: str, argv: list[str], requires_full
     finally:
         sys.argv = previous_argv
         _restore_env_var("PASSIVBOT_CLI_PROG", previous_prog)
+        _restore_env_var(ENV_SKIP_RUNTIME_VERIFY, previous_skip_runtime_verify)
     return 0
+
+
+async def _wrap_awaitable(awaitable):
+    return await awaitable
 
 
 def _dispatch_tool(argv: list[str]) -> int:
