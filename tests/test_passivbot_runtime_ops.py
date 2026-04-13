@@ -276,6 +276,39 @@ def test_log_health_summary_logs_debug_exc_info_and_omits_mem_suffix_when_resour
     assert debug_records[0].exc_info is not None
 
 
+def test_log_health_summary_supports_class_bound_format_duration(monkeypatch, caplog):
+    import passivbot as pb_mod
+
+    class FakeBot:
+        _format_duration = pb_mod.Passivbot._format_duration
+
+        def __init__(self):
+            self._health_start_ms = 5_000
+            self.positions = {}
+            self.quote = "USDT"
+            self._health_fills = 0
+            self._health_pnl = 0.0
+            self._last_loop_duration_ms = 0
+            self.error_counts = []
+            self._health_orders_placed = 0
+            self._health_orders_cancelled = 0
+            self._health_ws_reconnects = 0
+            self._health_rate_limits = 0
+
+        def get_raw_balance(self):
+            return 100.0
+
+        def get_hysteresis_snapped_balance(self):
+            return 100.0
+
+    monkeypatch.setattr(pb_runtime_ops, "utc_ms", lambda: 10_000)
+    caplog.set_level(logging.INFO)
+
+    pb_runtime_ops.log_health_summary(FakeBot())
+
+    assert "[health] uptime=5s" in caplog.text
+
+
 def test_log_memory_snapshot_returns_when_rss_unavailable():
     bot = types.SimpleNamespace()
 

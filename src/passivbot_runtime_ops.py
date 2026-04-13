@@ -176,7 +176,7 @@ def log_health_summary(self) -> None:
     """Log a health summary with uptime and counters."""
     now_ms = utc_ms()
     uptime_ms = now_ms - self._health_start_ms
-    uptime_str = self._format_duration(uptime_ms)
+    uptime_str = getattr(type(self), "_format_duration", format_duration_static)(uptime_ms)
 
     n_long = 0
     n_short = 0
