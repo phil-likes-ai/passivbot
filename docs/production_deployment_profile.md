@@ -102,6 +102,29 @@ Run a pre-production validation pass before real capital:
 
 Do not promote to production if staging/fake-live still hides missing data, broken auth, or unsafe operator exposure.
 
+### Minimum Staging Exercise
+
+For the supported production profile, a staging signoff should capture evidence for all of the
+following before real-money rollout:
+
+0. **Dependency-security gate**
+   - `python -m pip_audit -r requirements.txt --progress-spinner off`
+   - either the audit passes, or the rollout record includes an explicit waiver naming the unresolved packages/CVEs, approving owner, mitigation, and expiry/revisit date
+1. **Container/runtime contract check**
+   - `python -m pytest tests/test_container_runtime_contract.py -q`
+2. **Operator-surface policy check**
+   - `python -m pytest tests/test_monitor_relay.py tests/test_monitor_dev.py tests/test_monitor_web.py tests/test_fill_events_dash.py tests/test_omx_telegram_progress_bridge.py tests/test_custom_endpoints.py -q`
+3. **Representative fake-live rehearsal**
+   - `PYTHONPATH=src python src/tools/run_fake_live.py configs/fake_live_hsl_btc.hjson scenarios/fake_live/minimal.hjson --user fake_hsl_restart_test`
+4. **Operational review**
+   - confirm logs and monitor output land outside the repo tree
+   - confirm secrets arrive only through runtime injection or mounted secret files
+   - record the exact reviewed commit SHA, image tag or digest, and config identity used for the rehearsal
+   - confirm rollback steps name the exact image/config pair to restore
+   - if production monitoring is enabled, perform one real monitor or relay attach check through the intended local or authenticated path
+
+Record the commands used, whether they passed, and where the resulting logs/artifacts were stored.
+
 ### 3. Deploy
 
 - Start the canonical live container/runtime with the chosen mounted config and secrets path.
