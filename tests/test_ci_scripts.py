@@ -55,6 +55,19 @@ def test_error_contract_gate_allows_inline_suppression():
     assert findings == []
 
 
+def test_error_contract_gate_ignores_dict_get_default_without_semantic_context():
+    diff = """diff --git a/src/example.py b/src/example.py
+--- a/src/example.py
++++ b/src/example.py
+@@ -1,0 +1,2 @@
++value = payload.get("optional_metric", 0.0)
++rows = payload.get("rows", [])
+"""
+
+    findings = error_gate.scan_hunks(parse_added_hunks(diff))
+    assert findings == []
+
+
 def test_secret_gate_flags_high_signal_token_and_ignores_placeholder():
     diff = """diff --git a/src/example.py b/src/example.py
 --- a/src/example.py

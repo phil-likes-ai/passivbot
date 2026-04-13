@@ -167,7 +167,7 @@ def get_exchange_time(self):
         passivbot_utc_ms = getattr(import_module("passivbot"), "utc_ms", None)
         if callable(passivbot_utc_ms) and passivbot_utc_ms is not _ORIGINAL_UTC_MS:
             return passivbot_utc_ms()
-    except Exception:
+    except (ImportError, AttributeError, TypeError):
         pass
     return utc_ms()
 

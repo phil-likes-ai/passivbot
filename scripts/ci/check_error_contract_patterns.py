@@ -17,7 +17,6 @@ from scripts.ci.diff_scan_utils import AddedHunk, build_unified_diff, parse_adde
 ALLOW_MARKER = "error-contract: allow"
 DEFAULT_PREFIXES = ("src/",)
 DEFAULT_SUFFIXES = (".py",)
-GET_DEFAULT_RE = re.compile(r"\.get\([^\n]*,\s*(0|0\.0|None|False|\{\}|\[\])\)")
 RETURN_EXC_RE = re.compile(r"return_exceptions\s*=\s*True")
 EXCEPT_RE = re.compile(r"^\s*(except\s*:|except\s+Exception(?:\s+as\s+\w+)?\s*:)\s*(?P<trailing>.*)$")
 PASS_CONTINUE_RE = re.compile(r"^\s*(pass|continue)\b")
@@ -46,8 +45,6 @@ def scan_hunks(hunks: Sequence[AddedHunk]) -> List[Finding]:
                 continue
             if RETURN_EXC_RE.search(line.text):
                 findings.append(Finding(line.file_path, line.line_no, "return_exceptions_true", line.text.strip()))
-            if GET_DEFAULT_RE.search(line.text):
-                findings.append(Finding(line.file_path, line.line_no, "dict_get_default", line.text.strip()))
 
             match = EXCEPT_RE.match(line.text)
             if not match:

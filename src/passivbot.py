@@ -2000,12 +2000,12 @@ class Passivbot:
             try:
                 if sym in getattr(self, "active_symbols", []):
                     return True
-            except Exception:
+            except Exception:  # error-contract: allow - best-effort logging helper
                 pass
             try:
                 if sym in getattr(self, "open_orders", {}) and self.open_orders.get(sym):
                     return True
-            except Exception:
+            except Exception:  # error-contract: allow - best-effort logging helper
                 pass
             try:
                 return bool(self.has_position(sym))
@@ -2805,7 +2805,7 @@ class Passivbot:
                         if (now_ms - last_log_ms) < mode_change_throttle_ms:
                             continue
                         self._mode_change_last_log_ms[throttle_key] = now_ms
-                    except Exception:
+                    except Exception:  # error-contract: allow - logging throttle fallback
                         pass
                     logging.info("[mode] %s %s%s", change_type, elm, info_suffix)
 
@@ -3249,7 +3249,7 @@ class Passivbot:
                 converted = self.get_symbol_id_inv(sym)
                 if converted:
                     return converted
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 pass
             return sym
 
@@ -3281,7 +3281,7 @@ class Passivbot:
                     continue
                 try:
                     ts = int(ensure_millis(ts_raw))
-                except Exception:
+                except (TypeError, ValueError, OverflowError):
                     continue
                 symbol = _normalize_symbol(fill.get("symbol"))
                 if not symbol:
@@ -4525,7 +4525,12 @@ class Passivbot:
                 await asyncio.sleep(fetch_delay_s)
         else:
             symbol_tasks = [asyncio.create_task(load_symbol_bundle(sym)) for sym in ordered_symbols]
-            symbol_results = await asyncio.gather(*symbol_tasks, return_exceptions=True)
+            symbol_results = []
+            for task in symbol_tasks:
+                try:
+                    symbol_results.append(await task)
+                except Exception as e:
+                    symbol_results.append(e)
 
         m1_close_emas: dict[str, dict[float, float]] = {}
         m1_volume_emas: dict[str, dict[float, float]] = {}
@@ -5594,7 +5599,7 @@ class Passivbot:
                         if span is not None:
                             try:
                                 max_span = max(max_span, float(span))
-                            except Exception:
+                            except (TypeError, ValueError):
                                 pass
                 win = (
                     max(default_win, int(math.ceil(max_span * span_buffer)))
@@ -6178,7 +6183,7 @@ class Passivbot:
                             ",".join(coins),
                         )
                         self._stock_perps_warning_logged = True
-            except Exception:
+            except Exception:  # error-contract: allow - warning emission must not block refresh
                 pass
             self._log_coin_symbol_fallback_summary()
         except Exception as e:

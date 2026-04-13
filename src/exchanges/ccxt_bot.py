@@ -162,7 +162,7 @@ class CCXTBot(Passivbot):
                         return "long"
                     if decoded.endswith("_short"):
                         return "short"
-                except Exception:
+                except (ImportError, AttributeError, TypeError, ValueError):
                     pass
 
         return "both"

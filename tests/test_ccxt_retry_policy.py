@@ -56,13 +56,13 @@ async def test_non_bybit_keeps_default_retry_budget(tmp_path, monkeypatch):
         exchange=ex, exchange_name="binanceusdm", cache_dir=str(tmp_path / "caches")
     )
 
-    rows = await cm._ccxt_fetch_ohlcv_once(
-        "BTC/USDT:USDT",
-        since_ms=1643262960000,
-        limit=1000,
-        timeframe="1m",
-    )
+    with pytest.raises(RuntimeError, match="attempts=5"):
+        await cm._ccxt_fetch_ohlcv_once(
+            "BTC/USDT:USDT",
+            since_ms=1643262960000,
+            limit=1000,
+            timeframe="1m",
+        )
 
-    # Default behavior: 5 attempts -> still fails -> returns empty
-    assert rows == []
+    # Default behavior: 5 attempts -> fail loudly with retry context
     assert ex.calls == 5
