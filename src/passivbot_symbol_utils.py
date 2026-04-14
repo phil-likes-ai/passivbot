@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from utils import coin_to_symbol as util_coin_to_symbol, symbol_to_coin
+from utils import coin_symbol_warning_counts, coin_to_symbol as util_coin_to_symbol, symbol_to_coin
 
 
 def set_market_specific_settings(self):
@@ -79,3 +79,16 @@ def coin_to_symbol(self, coin, verbose=True):
     result = util_coin_to_symbol(coin, self.exchange, quote=self.quote, verbose=verbose)
     self.coin_to_symbol_map[coin] = result
     return result
+
+
+def _log_coin_symbol_fallback_summary(self):
+    """Emit a brief summary of symbol/coin mapping fallbacks (once per change)."""
+    counts = coin_symbol_warning_counts()
+    if counts != self._last_coin_symbol_warning_counts:
+        if counts["symbol_to_coin_fallbacks"] or counts["coin_to_symbol_fallbacks"]:
+            logging.info(
+                "[mapping] fallbacks: symbol->coin=%d | coin->symbol=%d (unique)",
+                counts["symbol_to_coin_fallbacks"],
+                counts["coin_to_symbol_fallbacks"],
+            )
+        self._last_coin_symbol_warning_counts = dict(counts)
